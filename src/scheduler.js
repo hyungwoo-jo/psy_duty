@@ -9,7 +9,8 @@
 import { addDays, isWorkday, weekKey, fmtDate, rangeDays } from './time.js';
 
 // preference: 'any' | 'weekday' | 'weekend'
-export function generateSchedule({ startDate, weeks = 4, employees, holidays = [], unavailableByName = {}, fillPriority = false, optimizeSwaps = true }) {
+// optimization: 'off' | 'fast' | 'medium' | 'strong'
+export function generateSchedule({ startDate, weeks = 4, employees, holidays = [], unavailableByName = {}, fillPriority = false, optimization = 'medium' }) {
   if (!employees || employees.length < 2) {
     throw new Error('근무자는 2명 이상 필요합니다.');
   }
@@ -77,27 +78,33 @@ export function generateSchedule({ startDate, weeks = 4, employees, holidays = [
     }
   }
 
-  // 선택적 로컬 스왑 최적화 (총근무시간 편차 완화)
-  if (optimizeSwaps) {
-    const map = schedule.map((d) => d.duties.map((x) => x.id));
-    const optimized = optimizeBySwaps({ map, days, people, weekKeys, start, totalDays, holidaySet, fillPriority });
+  // 선택적 최적화 (총근무시간 편차 완화)
+  const map = schedule.map((d) => d.duties.map((x) => x.id));
+  if (optimization && optimization !== 'off') {
+    const optimized = optimizeBySA({
+      map,
+      days,
+      people,
+      weekKeys,
+      start,
+      totalDays,
+      holidaySet,
+      fillPriority,
+      level: optimization,
+    });
     if (optimized && optimized.accepted) {
-      // 재구성: duties 교체 및 people/stats 갱신
       for (let i = 0; i < schedule.length; i += 1) {
         schedule[i].duties = (optimized.map[i] || []).map((id) => {
           const p = people.find((pp) => pp.id === id);
           return { id: p.id, name: p.name };
         });
       }
-      // people 상태와 경고/통계를 최적화 결과로 교체
       applyPeopleState(people, optimized.peopleSim);
       warnings.push(...optimized.warningsAfter);
     } else {
-      // 기본 경고 수집
       for (const p of people) collectWeeklyWarnings(p, warnings);
     }
   } else {
-    // 기본 경고 수집
     for (const p of people) collectWeeklyWarnings(p, warnings);
   }
 
@@ -260,55 +267,84 @@ export function generateSchedule({ startDate, weeks = 4, employees, holidays = [
   }
 
   // 로컬 스왑 최적화
-  function optimizeBySwaps({ map, days, people, weekKeys, start, totalDays, holidaySet, fillPriority }) {
-    // 현재 맵을 기준으로 힐클라임
+  function optimizeBySA({ map, days, people, weekKeys, start, totalDays, holidaySet, fillPriority, level }) {
+    // 초기 평가
     let current = map.map((arr) => arr.slice());
     let best = evaluateMap(current);
     if (!best.valid) return null;
-    let improved = false;
-    const attempts = Math.min(400, days.length * 30);
-    for (let t = 0; t < attempts; t += 1) {
-      // 두 날짜 랜덤 선택
-      const i = Math.floor(Math.random() * days.length);
-      let j = Math.floor(Math.random() * days.length);
-      if (i === j) { j = (j + 1) % days.length; }
-      const di = current[i] || [];
-      const dj = current[j] || [];
-      if (di.length === 0 || dj.length === 0) continue;
-      // 각 슬롯 중 하나 선택
-      const si = Math.floor(Math.random() * di.length);
-      const sj = Math.floor(Math.random() * dj.length);
-      // 동일 인물 중복 방지
-      if (di[si] === dj[sj]) continue;
-      // 제안 맵
+    let curObj = best.objective;
+    let bestMap = current.map((a) => a.slice());
+    let bestEval = best;
+
+    // 파라미터 (레벨별 시도 횟수와 냉각률)
+    const params = {
+      fast: { iters: Math.max(3000, days.length * 30), startT: 1.5, cool: 0.998 },
+      medium: { iters: Math.max(10000, days.length * 60), startT: 2.0, cool: 0.9985 },
+      strong: { iters: Math.max(25000, days.length * 120), startT: 3.0, cool: 0.999 },
+    }[level] || { iters: 0 };
+    if (!params.iters) return { accepted: false };
+
+    let T = params.startT;
+    for (let step = 0; step < params.iters; step += 1) {
       const proposal = current.map((arr) => arr.slice());
-      // 중복 인물 방지 체크
-      if (proposal[i].includes(dj[sj]) && !sameIndex(proposal[i], dj[sj], si)) continue;
-      if (proposal[j].includes(di[si]) && !sameIndex(proposal[j], di[si], sj)) continue;
-      proposal[i][si] = dj[sj];
-      proposal[j][sj] = di[si];
+      // 무브 선택: 1-move 60%, 2-swap 40%
+      if (Math.random() < 0.6) {
+        // 1-move: 한 날짜의 한 슬롯을 다른 날짜의 다른 사람으로 교체
+        let i = Math.floor(Math.random() * days.length);
+        const di = proposal[i] || [];
+        if (di.length === 0) continue;
+        const si = Math.floor(Math.random() * di.length);
+
+        // 대체 후보 찾기: 가능한 날짜 j, 그 날의 인원들 중 중복 없이 하나 선택
+        let j = Math.floor(Math.random() * days.length);
+        let guard = 0;
+        while (guard++ < 10 && (j === i || (proposal[j] || []).length === 0)) j = Math.floor(Math.random() * days.length);
+        const dj = proposal[j] || [];
+        const sj = Math.floor(Math.random() * dj.length);
+        const cand = dj[sj];
+        // 같은 날 중복 방지
+        if (proposal[i].includes(cand) && di[si] !== cand) continue;
+        proposal[i][si] = cand;
+      } else {
+        // 2-swap: 서로 교환
+        let i = Math.floor(Math.random() * days.length);
+        let j = Math.floor(Math.random() * days.length);
+        if (i === j) { j = (j + 1) % days.length; }
+        const di = proposal[i] || [];
+        const dj = proposal[j] || [];
+        if (di.length === 0 || dj.length === 0) continue;
+        const si = Math.floor(Math.random() * di.length);
+        const sj = Math.floor(Math.random() * dj.length);
+        if (di[si] === dj[sj]) continue;
+        // 중복 방지
+        if (proposal[i].includes(dj[sj]) || proposal[j].includes(di[si])) continue;
+        const tmp = proposal[i][si];
+        proposal[i][si] = proposal[j][sj];
+        proposal[j][sj] = tmp;
+      }
 
       const evalRes = evaluateMap(proposal);
-      if (evalRes.valid && evalRes.objective < best.objective - 1e-6) {
-        current = proposal;
-        best = evalRes;
-        improved = true;
-      }
-    }
-
-    if (!improved) return { accepted: false };
-    return { accepted: true, map: current, peopleSim: best.peopleSim, warningsAfter: best.warnings };
-
-    function sameIndex(arr, val, idx) {
-      let found = false;
-      for (let k = 0; k < arr.length; k += 1) {
-        if (arr[k] === val) {
-          if (k === idx) return true;
-          found = true;
+      if (!evalRes.valid) {
+        // 불만족 move는 버림
+      } else {
+        const dObj = evalRes.objective - curObj;
+        if (dObj <= 0 || Math.random() < Math.exp(-dObj / Math.max(1e-6, T))) {
+          current = proposal;
+          curObj = evalRes.objective;
+          if (curObj < best.objective - 1e-9) {
+            best = evalRes;
+            bestMap = proposal.map((a) => a.slice());
+            bestEval = evalRes;
+          }
         }
       }
-      return found;
+      T *= params.cool;
     }
+
+    if (best.objective < Number.POSITIVE_INFINITY) {
+      return { accepted: true, map: bestMap, peopleSim: bestEval.peopleSim, warningsAfter: bestEval.warnings };
+    }
+    return { accepted: false };
 
     function evaluateMap(assignMap) {
       // 사람 상태 초기화 (베이스라인 정규근무만 반영)

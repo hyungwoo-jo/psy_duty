@@ -14,6 +14,7 @@ const calendar = document.querySelector('#calendar');
 const holidaysInput = document.querySelector('#holidays');
 const unavailableInput = document.querySelector('#unavailable');
 const fillPriorityInput = document.querySelector('#fill-priority');
+const optLevelSelect = document.querySelector('#opt-level');
 
 // 기본값: 다음 월요일
 setDefaultStartMonday();
@@ -90,7 +91,8 @@ function onGenerate() {
     const holidays = [...parseHolidays(holidaysInput.value)];
     const unavailable = parseUnavailable(unavailableInput.value);
     const fillPriority = !!fillPriorityInput.checked;
-    const result = generateSchedule({ startDate, weeks, employees, holidays, unavailableByName: Object.fromEntries(unavailable), fillPriority });
+    const optimization = (optLevelSelect.value || 'medium');
+    const result = generateSchedule({ startDate, weeks, employees, holidays, unavailableByName: Object.fromEntries(unavailable), fillPriority, optimization });
     lastResult = result;
     renderSummary(result);
     renderReport(result);
