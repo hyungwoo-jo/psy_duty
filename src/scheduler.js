@@ -21,6 +21,8 @@ export function generateSchedule({ startDate, weeks = 4, employees, holidays = [
   const totalDays = weeks * 7;
   const days = rangeDays(start, totalDays);
   const holidaySet = new Set(holidays);
+  const WEEK_MAX = 72 + 12; // 주당 상한 (72±12 허용: 상한 84)
+  const TOTAL_MAX = 72 * weeks; // 총합 상한 (평균 72 유지)
 
   // 주 단위 키 추출 (월요일 시작)
   const allWeekKeys = new Set(days.map((d) => weekKey(d)));
@@ -57,11 +59,11 @@ export function generateSchedule({ startDate, weeks = 4, employees, holidays = [
     for (let slot = 0; slot < 2; slot += 1) {
       let result = pickCandidate({ index: i, date: cell.date, schedule, people, holidaySet, relax72: false });
       if (!result.person && fillPriority) {
-        // 72h 제약 완화 재시도
+        // 주간 상한 제약 완화 재시도
         const relaxed = pickCandidate({ index: i, date: cell.date, schedule, people, holidaySet, relax72: true });
         if (relaxed.person) {
           result = relaxed;
-          warnings.push(`충원우선: ${fmtDate(cell.date)} ${relaxed.person.name} 72h 초과 허용 배정`);
+          warnings.push(`충원우선: ${fmtDate(cell.date)} ${relaxed.person.name} 주간상한 초과 허용 배정`);
         }
       }
 
@@ -102,10 +104,10 @@ export function generateSchedule({ startDate, weeks = 4, employees, holidays = [
       applyPeopleState(people, optimized.peopleSim);
       warnings.push(...optimized.warningsAfter);
     } else {
-      for (const p of people) collectWeeklyWarnings(p, warnings);
+      for (const p of people) { collectWeeklyWarnings(p, warnings, WEEK_MAX); collectTotalWarning(p, warnings, TOTAL_MAX); }
     }
   } else {
-    for (const p of people) collectWeeklyWarnings(p, warnings);
+    for (const p of people) { collectWeeklyWarnings(p, warnings, WEEK_MAX); collectTotalWarning(p, warnings, TOTAL_MAX); }
   }
 
   // 공정성 지표: 당직 시간의 평균 대비 편차
@@ -136,12 +138,17 @@ export function generateSchedule({ startDate, weeks = 4, employees, holidays = [
   };
 
   // 내부 유틸
-  function collectWeeklyWarnings(p, warningsArr) {
+  function collectWeeklyWarnings(p, warningsArr, WEEK_MAX_VAL) {
     for (const wk of Object.keys(p.weeklyHours)) {
-      if (p.weeklyHours[wk] > 72 + 1e-9) {
-        warningsArr.push(`${p.name}의 ${wk} 주간 시간이 72시간을 초과했습니다: ${p.weeklyHours[wk]}h`);
+      if (p.weeklyHours[wk] > WEEK_MAX_VAL + 1e-9) {
+        warningsArr.push(`${p.name}의 ${wk} 주간 시간이 ${WEEK_MAX_VAL}h를 초과했습니다: ${p.weeklyHours[wk]}h`);
       }
     }
+  }
+
+  function collectTotalWarning(p, warningsArr, TOTAL_MAX_VAL) {
+    const total = Object.values(p.weeklyHours).reduce((a, b) => a + b, 0);
+    if (total > TOTAL_MAX_VAL + 1e-9) warningsArr.push(`${p.name}의 총합 시간이 ${TOTAL_MAX_VAL}h를 초과했습니다: ${Math.round(total)}h`);
   }
 
   function baselineRegularForWeek(wk, start, totalDays, holidaySet) {
@@ -170,7 +177,7 @@ export function generateSchedule({ startDate, weeks = 4, employees, holidays = [
     const takenIds = new Set(schedule[index].duties.map((d) => d.id));
 
     // 단계별 필터로 사유 수집
-    const stage = { offday: [], preference: [], unavailable: [], over72_today: [], over72_next: [] };
+    const stage = { offday: [], preference: [], unavailable: [], overWeek_today: [], overWeek_next: [], overTotal: [] };
     let pool = people.filter((p) => !takenIds.has(p.id));
 
     const afterOff = [];
@@ -185,11 +192,11 @@ export function generateSchedule({ startDate, weeks = 4, employees, holidays = [
     for (const p of pool) ((p.unavailable && p.unavailable.has(todayKey)) ? stage.unavailable : afterUnavail).push(p);
     pool = afterUnavail;
 
-    // 오늘 72h 체크 (완화 모드에서는 건너뜀)
+    // 오늘 주간 상한 체크 (완화 모드에서는 건너뜀)
     const afterToday = [];
     for (const p of pool) {
       const simToday = p.weeklyHours[wk] + 24 - (isTodayWorkday ? 8 : 0);
-      if (!relax72 && simToday > 72 + 1e-9) stage.over72_today.push(p); else afterToday.push(p);
+      if (!relax72 && simToday > WEEK_MAX + 1e-9) stage.overWeek_today.push(p); else afterToday.push(p);
     }
     pool = afterToday;
 
@@ -210,7 +217,11 @@ export function generateSchedule({ startDate, weeks = 4, employees, holidays = [
     for (const p of candidates) {
       const nextHours = p.weeklyHours[nextWk] ?? 0;
       const simNext = isNextWorkday ? nextHours - 8 : nextHours;
-      if (!relax72 && simNext > 72 + 1e-9) { stage.over72_next.push(p); continue; }
+      if (!relax72 && simNext > WEEK_MAX + 1e-9) { stage.overWeek_next.push(p); continue; }
+      // 총합 상한 체크 (당일/다음날 효과 델타 반영)
+      const totalNow = Object.values(p.weeklyHours).reduce((a, b) => a + b, 0);
+      const deltaTotal = 24 - (isTodayWorkday ? 8 : 0) - (isNextWorkday ? 8 : 0);
+      if (totalNow + deltaTotal > TOTAL_MAX + 1e-9) { stage.overTotal.push(p); continue; }
       return { person: p, reasons: [] };
     }
 
@@ -218,8 +229,9 @@ export function generateSchedule({ startDate, weeks = 4, employees, holidays = [
     if (stage.offday.length) reasons.push(['전일 당직 오프', stage.offday.length]);
     if (stage.preference.length) reasons.push(['선호 불일치', stage.preference.length]);
     if (stage.unavailable.length) reasons.push(['불가일', stage.unavailable.length]);
-    if (stage.over72_today.length && !relax72) reasons.push(['72h 초과(당일)', stage.over72_today.length]);
-    if (stage.over72_next.length && !relax72) reasons.push(['72h 초과(다음날)', stage.over72_next.length]);
+    if (stage.overWeek_today.length && !relax72) reasons.push([`주간상한 초과(당일>${WEEK_MAX}h)`, stage.overWeek_today.length]);
+    if (stage.overWeek_next.length && !relax72) reasons.push([`주간상한 초과(다음날>${WEEK_MAX}h)`, stage.overWeek_next.length]);
+    if (stage.overTotal.length) reasons.push([`총합상한 초과(>${TOTAL_MAX}h)`, stage.overTotal.length]);
     return { person: null, reasons };
   }
 
@@ -379,7 +391,7 @@ export function generateSchedule({ startDate, weeks = 4, employees, holidays = [
           if (p.unavailable && p.unavailable.has(todayKey)) return { valid: false };
           if (!allowByPreference(p.preference, isTodayWorkday)) return { valid: false };
           const simToday = p.weeklyHours[wk] + 24 - (isTodayWorkday ? 8 : 0);
-          if (!fillPriority && simToday > 72 + 1e-9) return { valid: false };
+          if (!fillPriority && simToday > WEEK_MAX + 1e-9) return { valid: false };
           // 적용
           p.weeklyHours[wk] = Math.max(0, simToday);
           p.dutyCount += 1;
@@ -395,7 +407,12 @@ export function generateSchedule({ startDate, weeks = 4, employees, holidays = [
         }
       }
       // 주간 경고 집계 및 목적함수 계산
-      for (const p of sim) collectWeeklyWarnings(p, warningsSim);
+      for (const p of sim) collectWeeklyWarnings(p, warningsSim, WEEK_MAX);
+      // 총합 상한 검사
+      for (const p of sim) {
+        const total = Object.values(p.weeklyHours).reduce((a, b) => a + b, 0);
+        if (total > TOTAL_MAX + 1e-9) return { valid: false };
+      }
       const totals = sim.map((p) => Object.values(p.weeklyHours).reduce((a, b) => a + b, 0));
       const avg = totals.reduce((a, b) => a + b, 0) / sim.length;
       const objective = totals.reduce((acc, t) => acc + (t - avg) * (t - avg), 0);

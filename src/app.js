@@ -139,7 +139,7 @@ function renderSummary(result) {
   lines.push(perTotal);
 
   summary.innerHTML = `
-    <div class="legend">주간 시간 = 정규(평일 8h) + 당직(24h) - (당일 평일 8h) - (다음날 평일 8h)${fillPriorityInput.checked ? ' · 충원우선: 72h 초과 허용' : ''}</div>
+    <div class="legend">주간 시간 = 정규(평일 8h) + 당직(24h) - (당일 평일 8h) - (다음날 평일 8h) · 목표 72±12h/주, 총합 ≤ 72×주수${fillPriorityInput.checked ? ' · 충원우선: 주간상한 초과 허용' : ''}</div>
     <div class="${warn ? 'warn' : 'ok'}">${lines.join(' / ')}</div>
   `;
 }
