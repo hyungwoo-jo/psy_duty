@@ -10,7 +10,7 @@ import { addDays, isWorkday, weekKey, fmtDate, rangeDays } from './time.js';
 
 // preference: 'any' | 'weekday' | 'weekend'
 // optimization: 'off' | 'fast' | 'medium' | 'strong'
-export function generateSchedule({ startDate, weeks = 4, employees, holidays = [], unavailableByName = {}, fillPriority = false, optimization = 'medium' }) {
+export function generateSchedule({ startDate, weeks = 4, employees, holidays = [], unavailableByName = {}, vacationWeeksByName = {}, optimization = 'medium' }) {
   if (!employees || employees.length < 2) {
     throw new Error('근무자는 2명 이상 필요합니다.');
   }
@@ -34,13 +34,20 @@ export function generateSchedule({ startDate, weeks = 4, employees, holidays = [
     name: typeof emp === 'string' ? emp : emp.name,
     preference: normalizePref(typeof emp === 'string' ? 'any' : emp.preference),
     weeklyHours: Object.fromEntries(
-      weekKeys.map((wk) => [wk, baselineRegularForWeek(wk, start, totalDays, holidaySet)])
+      weekKeys.map((wk) => [wk, baselineRegularForWeek(wk, start, totalDays, holidaySet, (vacationWeeksByName[(typeof emp === 'string' ? emp : emp.name)] || []).includes(wk))])
     ),
     dutyCount: 0,
     lastDutyIndex: -999,
     offDayKeys: new Set(), // 당직 다음날 (정규근무 오프, 당직 불가)
     unavailable: new Set(unavailableByName[(typeof emp === 'string' ? emp : emp.name)] || []),
+    vacationWeeks: new Set(vacationWeeksByName[(typeof emp === 'string' ? emp : emp.name)] || []),
   }));
+
+  // 개인별 총합 상한(휴가 주 제외) 계산 (스케줄링 전에 필요)
+  for (const p of people) {
+    const effectiveWeeks = weekKeys.filter((wk) => !p.vacationWeeks.has(wk)).length;
+    p.totalCapHours = 72 * effectiveWeeks;
+  }
 
   // 결과 구조
   const schedule = days.map((date, idx) => ({
@@ -57,15 +64,7 @@ export function generateSchedule({ startDate, weeks = 4, employees, holidays = [
   for (let i = 0; i < schedule.length; i += 1) {
     const cell = schedule[i];
     for (let slot = 0; slot < 2; slot += 1) {
-      let result = pickCandidate({ index: i, date: cell.date, schedule, people, holidaySet, relax72: false });
-      if (!result.person && fillPriority) {
-        // 주간 상한 제약 완화 재시도
-        const relaxed = pickCandidate({ index: i, date: cell.date, schedule, people, holidaySet, relax72: true });
-        if (relaxed.person) {
-          result = relaxed;
-          warnings.push(`충원우선: ${fmtDate(cell.date)} ${relaxed.person.name} 주간상한 초과 허용 배정`);
-        }
-      }
+      const result = pickCandidate({ index: i, date: cell.date, schedule, people, holidaySet });
 
       if (!result.person) {
         cell.underfilled = true; // 규칙 준수 내에서 미충원
@@ -91,7 +90,6 @@ export function generateSchedule({ startDate, weeks = 4, employees, holidays = [
       start,
       totalDays,
       holidaySet,
-      fillPriority,
       level: optimization,
     });
     if (optimized && optimized.accepted) {
@@ -104,10 +102,10 @@ export function generateSchedule({ startDate, weeks = 4, employees, holidays = [
       applyPeopleState(people, optimized.peopleSim);
       warnings.push(...optimized.warningsAfter);
     } else {
-      for (const p of people) { collectWeeklyWarnings(p, warnings, WEEK_MAX); collectTotalWarning(p, warnings, TOTAL_MAX); }
+      for (const p of people) { collectWeeklyWarnings(p, warnings, WEEK_MAX); collectTotalWarning(p, warnings, p.totalCapHours); }
     }
   } else {
-    for (const p of people) { collectWeeklyWarnings(p, warnings, WEEK_MAX); collectTotalWarning(p, warnings, TOTAL_MAX); }
+    for (const p of people) { collectWeeklyWarnings(p, warnings, WEEK_MAX); collectTotalWarning(p, warnings, p.totalCapHours); }
   }
 
   // 공정성 지표: 당직 시간의 평균 대비 편차
@@ -151,7 +149,8 @@ export function generateSchedule({ startDate, weeks = 4, employees, holidays = [
     if (total > TOTAL_MAX_VAL + 1e-9) warningsArr.push(`${p.name}의 총합 시간이 ${TOTAL_MAX_VAL}h를 초과했습니다: ${Math.round(total)}h`);
   }
 
-  function baselineRegularForWeek(wk, start, totalDays, holidaySet) {
+  function baselineRegularForWeek(wk, start, totalDays, holidaySet, onVacation = false) {
+    if (onVacation) return 0;
     // 주 내에서 이 범위에 포함된 평일 수 * 8h
     const [y, m, d] = wk.split('-').map((v) => parseInt(v, 10));
     // wk는 해당 주의 월요일 날짜 문자열
@@ -166,7 +165,7 @@ export function generateSchedule({ startDate, weeks = 4, employees, holidays = [
     return hours;
   }
 
-  function pickCandidate({ index, date, schedule, people, holidaySet, relax72 }) {
+  function pickCandidate({ index, date, schedule, people, holidaySet }) {
     const todayKey = fmtDate(date);
     const wk = weekKey(date);
     const next = addDays(date, 1);
@@ -177,7 +176,7 @@ export function generateSchedule({ startDate, weeks = 4, employees, holidays = [
     const takenIds = new Set(schedule[index].duties.map((d) => d.id));
 
     // 단계별 필터로 사유 수집
-    const stage = { offday: [], preference: [], unavailable: [], overWeek_today: [], overWeek_next: [], overTotal: [] };
+    const stage = { offday: [], preference: [], unavailable: [], vacation: [], overWeek_today: [], overWeek_next: [], overTotal: [] };
     let pool = people.filter((p) => !takenIds.has(p.id));
 
     const afterOff = [];
@@ -192,11 +191,15 @@ export function generateSchedule({ startDate, weeks = 4, employees, holidays = [
     for (const p of pool) ((p.unavailable && p.unavailable.has(todayKey)) ? stage.unavailable : afterUnavail).push(p);
     pool = afterUnavail;
 
+    const afterVacation = [];
+    for (const p of pool) ((p.vacationWeeks && p.vacationWeeks.has(wk)) ? stage.vacation : afterVacation).push(p);
+    pool = afterVacation;
+
     // 오늘 주간 상한 체크 (완화 모드에서는 건너뜀)
     const afterToday = [];
     for (const p of pool) {
       const simToday = p.weeklyHours[wk] + 24 - (isTodayWorkday ? 8 : 0);
-      if (!relax72 && simToday > WEEK_MAX + 1e-9) stage.overWeek_today.push(p); else afterToday.push(p);
+      if (simToday > WEEK_MAX + 1e-9) stage.overWeek_today.push(p); else afterToday.push(p);
     }
     pool = afterToday;
 
@@ -217,11 +220,12 @@ export function generateSchedule({ startDate, weeks = 4, employees, holidays = [
     for (const p of candidates) {
       const nextHours = p.weeklyHours[nextWk] ?? 0;
       const simNext = isNextWorkday ? nextHours - 8 : nextHours;
-      if (!relax72 && simNext > WEEK_MAX + 1e-9) { stage.overWeek_next.push(p); continue; }
+      if (simNext > WEEK_MAX + 1e-9) { stage.overWeek_next.push(p); continue; }
       // 총합 상한 체크 (당일/다음날 효과 델타 반영)
       const totalNow = Object.values(p.weeklyHours).reduce((a, b) => a + b, 0);
       const deltaTotal = 24 - (isTodayWorkday ? 8 : 0) - (isNextWorkday ? 8 : 0);
-      if (totalNow + deltaTotal > TOTAL_MAX + 1e-9) { stage.overTotal.push(p); continue; }
+      const totalCap = p.totalCapHours ?? (72 * weeks); // fallback
+      if (totalNow + deltaTotal > totalCap + 1e-9) { stage.overTotal.push(p); continue; }
       return { person: p, reasons: [] };
     }
 
@@ -229,9 +233,10 @@ export function generateSchedule({ startDate, weeks = 4, employees, holidays = [
     if (stage.offday.length) reasons.push(['전일 당직 오프', stage.offday.length]);
     if (stage.preference.length) reasons.push(['선호 불일치', stage.preference.length]);
     if (stage.unavailable.length) reasons.push(['불가일', stage.unavailable.length]);
-    if (stage.overWeek_today.length && !relax72) reasons.push([`주간상한 초과(당일>${WEEK_MAX}h)`, stage.overWeek_today.length]);
-    if (stage.overWeek_next.length && !relax72) reasons.push([`주간상한 초과(다음날>${WEEK_MAX}h)`, stage.overWeek_next.length]);
-    if (stage.overTotal.length) reasons.push([`총합상한 초과(>${TOTAL_MAX}h)`, stage.overTotal.length]);
+    if (stage.vacation.length) reasons.push(['휴가 주 제외', stage.vacation.length]);
+    if (stage.overWeek_today.length) reasons.push([`주간상한 초과(당일>${WEEK_MAX}h)`, stage.overWeek_today.length]);
+    if (stage.overWeek_next.length) reasons.push([`주간상한 초과(다음날>${WEEK_MAX}h)`, stage.overWeek_next.length]);
+    if (stage.overTotal.length) reasons.push(['총합상한 초과', stage.overTotal.length]);
     return { person: null, reasons };
   }
 
@@ -279,7 +284,7 @@ export function generateSchedule({ startDate, weeks = 4, employees, holidays = [
   }
 
   // 로컬 스왑 최적화
-  function optimizeBySA({ map, days, people, weekKeys, start, totalDays, holidaySet, fillPriority, level }) {
+  function optimizeBySA({ map, days, people, weekKeys, start, totalDays, holidaySet, level }) {
     // 초기 평가
     let current = map.map((arr) => arr.slice());
     let best = evaluateMap(current);
@@ -365,8 +370,10 @@ export function generateSchedule({ startDate, weeks = 4, employees, holidays = [
         name: p.name,
         preference: p.preference,
         unavailable: p.unavailable,
+        vacationWeeks: p.vacationWeeks,
+        totalCapHours: p.totalCapHours,
         weeklyHours: Object.fromEntries(
-          weekKeys.map((wk) => [wk, baselineRegularForWeek(wk, start, totalDays, holidaySet)])
+          weekKeys.map((wk) => [wk, baselineRegularForWeek(wk, start, totalDays, holidaySet, p.vacationWeeks.has(wk))])
         ),
         dutyCount: 0,
         lastDutyIndex: -999,
@@ -389,9 +396,10 @@ export function generateSchedule({ startDate, weeks = 4, employees, holidays = [
           // 제약 검사
           if (p.offDayKeys.has(todayKey)) return { valid: false };
           if (p.unavailable && p.unavailable.has(todayKey)) return { valid: false };
+          if (p.vacationWeeks && p.vacationWeeks.has(wk)) return { valid: false };
           if (!allowByPreference(p.preference, isTodayWorkday)) return { valid: false };
           const simToday = p.weeklyHours[wk] + 24 - (isTodayWorkday ? 8 : 0);
-          if (!fillPriority && simToday > WEEK_MAX + 1e-9) return { valid: false };
+          if (simToday > WEEK_MAX + 1e-9) return { valid: false };
           // 적용
           p.weeklyHours[wk] = Math.max(0, simToday);
           p.dutyCount += 1;
@@ -408,10 +416,11 @@ export function generateSchedule({ startDate, weeks = 4, employees, holidays = [
       }
       // 주간 경고 집계 및 목적함수 계산
       for (const p of sim) collectWeeklyWarnings(p, warningsSim, WEEK_MAX);
-      // 총합 상한 검사
+      // 총합 상한 검사 (개인별 cap)
       for (const p of sim) {
         const total = Object.values(p.weeklyHours).reduce((a, b) => a + b, 0);
-        if (total > TOTAL_MAX + 1e-9) return { valid: false };
+        const cap = p.totalCapHours ?? (72 * weekKeys.length);
+        if (total > cap + 1e-9) return { valid: false };
       }
       const totals = sim.map((p) => Object.values(p.weeklyHours).reduce((a, b) => a + b, 0));
       const avg = totals.reduce((a, b) => a + b, 0) / sim.length;

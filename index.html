@@ -62,11 +62,13 @@
 이영희: 2025-01-04
 "></textarea>
       </div>
+      <div class="field field--full">
+        <label for="vacations">휴가 (이름: 날짜, 날짜...) — 해당 날짜가 속한 주 전체 제외</label>
+        <textarea id="vacations" rows="4" placeholder="예시:
+홍길동: 2025-01-06  (이 주간 전체 휴가)
+김철수: 2025-01-20, 2025-02-03"></textarea>
+      </div>
       <div class="actions">
-        <label style="display:flex;align-items:center;gap:6px">
-          <input id="fill-priority" type="checkbox" />
-          <span>충원 우선 모드 (72h 초과 허용, 경고)</span>
-        </label>
         <label style="display:flex;align-items:center;gap:6px">
           <span>최적화</span>
           <select id="opt-level">

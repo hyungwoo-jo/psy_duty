@@ -13,7 +13,7 @@ const report = document.querySelector('#report');
 const calendar = document.querySelector('#calendar');
 const holidaysInput = document.querySelector('#holidays');
 const unavailableInput = document.querySelector('#unavailable');
-const fillPriorityInput = document.querySelector('#fill-priority');
+const vacationsInput = document.querySelector('#vacations');
 const optLevelSelect = document.querySelector('#opt-level');
 
 // 기본값: 다음 월요일
@@ -90,9 +90,9 @@ function onGenerate() {
 
     const holidays = [...parseHolidays(holidaysInput.value)];
     const unavailable = parseUnavailable(unavailableInput.value);
-    const fillPriority = !!fillPriorityInput.checked;
     const optimization = (optLevelSelect.value || 'medium');
-    const result = generateSchedule({ startDate, weeks, employees, holidays, unavailableByName: Object.fromEntries(unavailable), fillPriority, optimization });
+    const vacations = parseVacations(vacationsInput.value);
+    const result = generateSchedule({ startDate, weeks, employees, holidays, unavailableByName: Object.fromEntries(unavailable), vacationWeeksByName: Object.fromEntries(vacations), optimization });
     lastResult = result;
     renderSummary(result);
     renderReport(result);
@@ -100,12 +100,14 @@ function onGenerate() {
     exportJsonBtn.disabled = false;
     exportCsvBtn.disabled = false;
 
-    // 경고: 불가일에 지정되었지만 인원 목록에 없는 이름
+    // 경고: 불가일/휴가 이름 확인
     const names = new Set(employees.map((e) => e.name));
-    const unknown = [...unavailable.keys()].filter((n) => !names.has(n));
-    if (unknown.length) {
-      messages.textContent = `참고: 불가일에 지정되었으나 인원 목록에 없는 이름: ${unknown.join(', ')}`;
-    }
+    const unknownUnavail = [...unavailable.keys()].filter((n) => !names.has(n));
+    const unknownVacs = [...vacations.keys()].filter((n) => !names.has(n));
+    const notes = [];
+    if (unknownUnavail.length) notes.push(`불가일 이름 불일치: ${unknownUnavail.join(', ')}`);
+    if (unknownVacs.length) notes.push(`휴가 이름 불일치: ${unknownVacs.join(', ')}`);
+    messages.textContent = notes.join(' | ');
   } catch (err) {
     console.error(err);
     messages.textContent = err.message || String(err);
@@ -139,7 +141,7 @@ function renderSummary(result) {
   lines.push(perTotal);
 
   summary.innerHTML = `
-    <div class="legend">주간 시간 = 정규(평일 8h) + 당직(24h) - (당일 평일 8h) - (다음날 평일 8h) · 목표 72±12h/주, 총합 ≤ 72×주수${fillPriorityInput.checked ? ' · 충원우선: 주간상한 초과 허용' : ''}</div>
+    <div class="legend">주간 시간 = 정규(평일 8h) + 당직(24h) - (당일 평일 8h) - (다음날 평일 8h) · 목표 72±12h/주, 개인 총합 ≤ 72×(근무주수)</div>
     <div class="${warn ? 'warn' : 'ok'}">${lines.join(' / ')}</div>
   `;
 }
@@ -308,4 +310,23 @@ function groupBy(arr, keyFn) {
 
 function signed(n) {
   return (n > 0 ? '+' : '') + n;
+}
+
+function parseVacations(text) {
+  // 형식: 이름: YYYY-MM-DD, YYYY-MM-DD ...  (각 날짜가 속한 주 전체 휴가)
+  const map = new Map();
+  const lines = text.split(/\r?\n/);
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) continue;
+    const m = line.match(/^([^:：]+)[:：](.+)$/);
+    if (!m) continue;
+    const name = m[1].trim();
+    const rest = m[2];
+    const dates = (rest.match(/\d{4}-\d{2}-\d{2}/g) || []).map((d) => d.trim());
+    if (!map.has(name)) map.set(name, new Set());
+    const set = map.get(name);
+    for (const d of dates) set.add(weekKey(new Date(d)));
+  }
+  return map;
 }
