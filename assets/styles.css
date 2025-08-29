@@ -1,0 +1,95 @@
+:root {
+  --bg: #0b0c10;
+  --panel: #121417;
+  --text: #e5e7eb;
+  --muted: #9aa3b2;
+  --accent: #5eead4;
+  --warn: #fca5a5;
+  --ok: #86efac;
+  --grid: #1f2329;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, Apple Color Emoji, Segoe UI Emoji;
+  background: var(--bg);
+  color: var(--text);
+}
+
+header, section, footer {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 16px;
+}
+
+header h1 { margin: 12px 0 4px; }
+header p { margin: 0; color: var(--muted); }
+
+.controls {
+  background: var(--panel);
+  border-radius: 10px;
+  border: 1px solid var(--grid);
+  margin-top: 12px;
+}
+
+.field { padding: 12px 12px 0; display: inline-block; vertical-align: top; }
+.field label { display: block; font-weight: 600; margin-bottom: 6px; }
+.field input, .field textarea {
+  background: #0e1116;
+  color: var(--text);
+  border: 1px solid var(--grid);
+  border-radius: 8px;
+  padding: 8px 10px;
+  width: 260px;
+}
+.field textarea { width: calc(100% - 24px); resize: vertical; }
+.field--full { display: block; width: 100%; }
+
+.actions { padding: 12px; display: flex; gap: 8px; }
+button {
+  background: #0e1116;
+  color: var(--text);
+  border: 1px solid var(--grid);
+  border-radius: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.messages { padding: 0 12px 12px; color: var(--muted); }
+
+.summary { margin-top: 12px; color: var(--text); }
+.summary .warn { color: var(--warn); font-weight: 600; }
+.summary .ok { color: var(--ok); font-weight: 600; }
+
+.calendar { margin-top: 12px; overflow: auto; }
+.week-grid {
+  border-collapse: collapse;
+  width: 100%;
+  margin-bottom: 16px;
+}
+.week-grid th, .week-grid td {
+  border: 1px solid var(--grid);
+  padding: 6px 8px;
+  vertical-align: top;
+}
+.week-grid th { background: #0f1318; color: var(--muted); font-weight: 600; }
+.day {
+  min-height: 88px;
+}
+.date { color: var(--muted); font-size: 12px; }
+.duties { margin-top: 6px; display: flex; flex-direction: column; gap: 4px; }
+.duty-chip {
+  background: #0b1218;
+  border: 1px solid #1f2a35;
+  border-radius: 999px;
+  display: inline-flex;
+  padding: 2px 8px;
+  font-size: 12px;
+  width: max-content;
+}
+.underfill { outline: 2px dashed var(--warn); outline-offset: -2px; }
+
+.legend { color: var(--muted); font-size: 12px; }
+

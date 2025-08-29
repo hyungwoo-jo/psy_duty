@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>당직표 생성기 (초안)</title>
+    <link rel="stylesheet" href="assets/styles.css" />
+  </head>
+  <body>
+    <header>
+      <h1>당직표 생성기 (초안)</h1>
+      <p>규칙: 하루 2명 당직, 당직 다음날 오프, 주간 72시간 초과 금지 (정규근무 월–금 8시간 가정).</p>
+    </header>
+
+    <section class="controls">
+      <div class="field">
+        <label for="start-date">시작일</label>
+        <input id="start-date" type="date" />
+      </div>
+      <div class="field">
+        <label for="weeks">주 수</label>
+        <input id="weeks" type="number" min="1" max="8" value="4" />
+      </div>
+      <div class="field field--full">
+        <label for="employees">근무자 목록 (이름, 선호옵션)</label>
+        <textarea id="employees" rows="8" placeholder="형식 예시:
+홍길동, any
+김철수, weekday
+이영희, weekend
+박민수, any
+최은지, weekday
+정유진, weekend
+권도윤, any
+서지수, any">홍길동, any
+김철수, weekday
+이영희, weekend
+박민수, any
+최은지, weekday
+정유진, weekend
+권도윤, any
+서지수, any</textarea>
+      </div>
+      <div class="field field--full">
+        <label for="holidays">공휴일 지정 (YYYY-MM-DD, 한 줄에 한 개)</label>
+        <textarea id="holidays" rows="4" placeholder="예시:
+2025-01-01
+2025-02-28"></textarea>
+      </div>
+      <div class="actions">
+        <button id="generate">당직표 생성</button>
+        <button id="export-json" disabled>JSON 내보내기</button>
+        <button id="export-csv" disabled>CSV 내보내기</button>
+      </div>
+      <div id="messages" class="messages" aria-live="polite"></div>
+    </section>
+
+    <section>
+      <div id="summary" class="summary"></div>
+      <div class="legend">선호옵션: any(제한 없음) · weekday(평일만) · weekend(주말/공휴일만)</div>
+      <div id="calendar" class="calendar"></div>
+    </section>
+
+    <footer>
+      <small>오픈소스 초안 — 정교화 필요 시 규칙/데이터 확장 가능</small>
+    </footer>
+
+    <script type="module" src="src/app.js"></script>
+  </body>
+  </html>

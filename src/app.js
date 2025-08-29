@@ -1,0 +1,221 @@
+import { generateSchedule } from './scheduler.js';
+import { fmtDate, addDays, isWeekday, rangeDays, weekKey } from './time.js';
+
+const startInput = document.querySelector('#start-date');
+const weeksInput = document.querySelector('#weeks');
+const employeesInput = document.querySelector('#employees');
+const generateBtn = document.querySelector('#generate');
+const exportJsonBtn = document.querySelector('#export-json');
+const exportCsvBtn = document.querySelector('#export-csv');
+const messages = document.querySelector('#messages');
+const summary = document.querySelector('#summary');
+const calendar = document.querySelector('#calendar');
+const holidaysInput = document.querySelector('#holidays');
+
+// 기본값: 다음 월요일
+setDefaultStartMonday();
+
+generateBtn.addEventListener('click', onGenerate);
+exportJsonBtn.addEventListener('click', onExportJson);
+exportCsvBtn.addEventListener('click', onExportCsv);
+
+let lastResult = null;
+
+function setDefaultStartMonday() {
+  const today = new Date();
+  const day = today.getDay();
+  const toNextMonday = ((8 - day) % 7) || 7;
+  const nextMonday = new Date(today);
+  nextMonday.setDate(today.getDate() + toNextMonday);
+  startInput.valueAsDate = nextMonday;
+}
+
+function parseEmployees(text) {
+  // 형식: 이름[,|\t| ](any|weekday|weekend|평일|주말) (옵션)
+  const lines = text.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+  return lines.map((line) => {
+    // 쉼표/탭/파이프/공백 구분자 지원
+    const parts = line.split(/\s*[|,\t]\s*|\s{2,}/).map((p) => p.trim()).filter(Boolean);
+    const name = parts[0];
+    const pref = (parts[1] || 'any').toLowerCase();
+    return { name, preference: toPref(pref) };
+  });
+}
+
+function toPref(s) {
+  if (!s) return 'any';
+  if (s.startsWith('weekend') || s === '주말') return 'weekend';
+  if (s.startsWith('weekday') || s === '평일') return 'weekday';
+  return 'any';
+}
+
+function parseHolidays(text) {
+  return new Set(
+    text
+      .split(/\r?\n/)
+      .map((s) => s.trim())
+      .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d))
+  );
+}
+
+function onGenerate() {
+  try {
+    messages.textContent = '';
+    const startDate = startInput.value;
+    const weeks = Math.max(1, Math.min(8, Number(weeksInput.value || 4)));
+    const employees = parseEmployees(employeesInput.value);
+
+    const holidays = [...parseHolidays(holidaysInput.value)];
+    const result = generateSchedule({ startDate, weeks, employees, holidays });
+    lastResult = result;
+    renderSummary(result);
+    renderCalendar(result);
+    exportJsonBtn.disabled = false;
+    exportCsvBtn.disabled = false;
+  } catch (err) {
+    console.error(err);
+    messages.textContent = err.message || String(err);
+    exportJsonBtn.disabled = true;
+    exportCsvBtn.disabled = true;
+  }
+}
+
+function renderSummary(result) {
+  const totalUnderfill = result.schedule.filter((d) => d.underfilled).length;
+  const warn = result.warnings.length || totalUnderfill > 0;
+
+  const lines = [];
+  lines.push(`기간: ${result.startDate} ~ ${endDateOf(result)}`);
+  lines.push(`근무자 수: ${result.employees.length}명`);
+  lines.push(`미충원 일수: ${totalUnderfill}일`);
+  lines.push(warn ? `주의: ${[...result.warnings].join(' | ') || '충원 인원 부족일 존재'}` : '검증: 제약 내에서 생성됨');
+
+  // 인원별 통계
+  const fairness = `평균 당직시간 ${result.fairness.avgDutyHours}h / 평균 총근무시간 ${result.fairness.avgTotalHours}h`;
+  lines.push(fairness);
+
+  const perDuty = result.stats
+    .map((s) => `${s.name}: 당직 ${s.dutyCount}회(${s.dutyHours}h, ${signed(s.dutyHoursDelta)}h)`)    
+    .join(' · ');
+  lines.push(perDuty);
+
+  const perTotal = result.stats
+    .map((s) => `${s.name}: 총 ${Math.round(s.totalHours)}h(${signed(s.totalHoursDelta)}h)`)    
+    .join(' · ');
+  lines.push(perTotal);
+
+  summary.innerHTML = `
+    <div class="legend">주간 시간 = 정규(평일 8h) + 당직(24h) - 당직 다음날 평일 8h</div>
+    <div class="${warn ? 'warn' : 'ok'}">${lines.join(' / ')}</div>
+  `;
+}
+
+function renderCalendar(result) {
+  calendar.innerHTML = '';
+  const start = new Date(result.startDate);
+  const days = result.schedule.map((s) => new Date(s.date));
+
+  // 주별로 테이블 생성
+  const weeks = groupBy(result.schedule, (d) => d.weekKey);
+  for (const [wk, items] of weeks) {
+    const table = document.createElement('table');
+    table.className = 'week-grid';
+    const thead = document.createElement('thead');
+    const trh = document.createElement('tr');
+    const weekdays = ['월', '화', '수', '목', '금', '토', '일'];
+    for (const w of weekdays) {
+      const th = document.createElement('th');
+      th.textContent = w;
+      trh.appendChild(th);
+    }
+    thead.appendChild(trh);
+    table.appendChild(thead);
+
+    const bodyTr = document.createElement('tr');
+    const monday = new Date(wk);
+    for (let i = 0; i < 7; i += 1) {
+      const day = new Date(monday);
+      day.setDate(monday.getDate() + i);
+      const key = fmtDate(day);
+      const cellData = items.find((x) => x.key === key);
+      const td = document.createElement('td');
+      td.className = 'day';
+      const dateEl = document.createElement('div');
+      dateEl.className = 'date';
+      dateEl.textContent = `${key}`;
+      td.appendChild(dateEl);
+      const dutiesEl = document.createElement('div');
+      dutiesEl.className = 'duties';
+      if (cellData) {
+        for (const d of cellData.duties) {
+          const chip = document.createElement('div');
+          chip.className = 'duty-chip';
+          chip.textContent = d.name;
+          dutiesEl.appendChild(chip);
+        }
+        if (cellData.underfilled) td.classList.add('underfill');
+      } else {
+        // 범위 밖
+        td.style.opacity = '0.3';
+      }
+      td.appendChild(dutiesEl);
+      bodyTr.appendChild(td);
+    }
+    const tbody = document.createElement('tbody');
+    tbody.appendChild(bodyTr);
+    table.appendChild(tbody);
+    calendar.appendChild(table);
+  }
+}
+
+function onExportJson() {
+  if (!lastResult) return;
+  download('duty-roster.json', JSON.stringify(lastResult, null, 2));
+}
+
+function onExportCsv() {
+  if (!lastResult) return;
+  const rows = [['date', 'name1', 'name2']];
+  for (const d of lastResult.schedule) {
+    const names = d.duties.map((x) => x.name);
+    rows.push([d.key, names[0] || '', names[1] || '']);
+  }
+  const csv = rows.map((r) => r.map(csvEscape).join(',')).join('\n');
+  download('duty-roster.csv', csv);
+}
+
+function csvEscape(s) {
+  const v = String(s);
+  if (/[",\n]/.test(v)) return '"' + v.replaceAll('"', '""') + '"';
+  return v;
+}
+
+function download(filename, content) {
+  const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function endDateOf(result) {
+  const start = new Date(result.startDate);
+  const end = addDays(start, result.weeks * 7 - 1);
+  return fmtDate(end);
+}
+
+function groupBy(arr, keyFn) {
+  const map = new Map();
+  for (const item of arr) {
+    const k = keyFn(item);
+    if (!map.has(k)) map.set(k, []);
+    map.get(k).push(item);
+  }
+  return map;
+}
+
+function signed(n) {
+  return (n > 0 ? '+' : '') + n;
+}
