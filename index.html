@@ -46,7 +46,19 @@
 2025-01-01
 2025-02-28"></textarea>
       </div>
+      <div class="field field--full">
+        <label for="unavailable">개인별 불가일 (이름: 날짜, 날짜...)</label>
+        <textarea id="unavailable" rows="5" placeholder="예시:
+홍길동: 2025-01-07, 2025-01-15
+김철수: 2025-01-10 | 2025-01-11
+이영희: 2025-01-04
+"></textarea>
+      </div>
       <div class="actions">
+        <label style="display:flex;align-items:center;gap:6px">
+          <input id="fill-priority" type="checkbox" />
+          <span>충원 우선 모드 (72h 초과 허용, 경고)</span>
+        </label>
         <button id="generate">당직표 생성</button>
         <button id="export-json" disabled>JSON 내보내기</button>
         <button id="export-csv" disabled>CSV 내보내기</button>

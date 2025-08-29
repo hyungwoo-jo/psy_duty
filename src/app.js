@@ -11,6 +11,8 @@ const messages = document.querySelector('#messages');
 const summary = document.querySelector('#summary');
 const calendar = document.querySelector('#calendar');
 const holidaysInput = document.querySelector('#holidays');
+const unavailableInput = document.querySelector('#unavailable');
+const fillPriorityInput = document.querySelector('#fill-priority');
 
 // 기본값: 다음 월요일
 setDefaultStartMonday();
@@ -58,6 +60,25 @@ function parseHolidays(text) {
   );
 }
 
+function parseUnavailable(text) {
+  // 형식: 이름: YYYY-MM-DD, YYYY-MM-DD ... (쉼표/파이프/탭/공백 등 혼합 허용)
+  const map = new Map();
+  const lines = text.split(/\r?\n/);
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) continue;
+    const m = line.match(/^([^:：]+)[:：](.+)$/);
+    if (!m) continue;
+    const name = m[1].trim();
+    const rest = m[2];
+    const dates = (rest.match(/\d{4}-\d{2}-\d{2}/g) || []).map((d) => d.trim());
+    if (!map.has(name)) map.set(name, new Set());
+    const set = map.get(name);
+    for (const d of dates) set.add(d);
+  }
+  return map;
+}
+
 function onGenerate() {
   try {
     messages.textContent = '';
@@ -66,12 +87,21 @@ function onGenerate() {
     const employees = parseEmployees(employeesInput.value);
 
     const holidays = [...parseHolidays(holidaysInput.value)];
-    const result = generateSchedule({ startDate, weeks, employees, holidays });
+    const unavailable = parseUnavailable(unavailableInput.value);
+    const fillPriority = !!fillPriorityInput.checked;
+    const result = generateSchedule({ startDate, weeks, employees, holidays, unavailableByName: Object.fromEntries(unavailable), fillPriority });
     lastResult = result;
     renderSummary(result);
     renderCalendar(result);
     exportJsonBtn.disabled = false;
     exportCsvBtn.disabled = false;
+
+    // 경고: 불가일에 지정되었지만 인원 목록에 없는 이름
+    const names = new Set(employees.map((e) => e.name));
+    const unknown = [...unavailable.keys()].filter((n) => !names.has(n));
+    if (unknown.length) {
+      messages.textContent = `참고: 불가일에 지정되었으나 인원 목록에 없는 이름: ${unknown.join(', ')}`;
+    }
   } catch (err) {
     console.error(err);
     messages.textContent = err.message || String(err);
@@ -105,7 +135,7 @@ function renderSummary(result) {
   lines.push(perTotal);
 
   summary.innerHTML = `
-    <div class="legend">주간 시간 = 정규(평일 8h) + 당직(24h) - 당직 다음날 평일 8h</div>
+    <div class="legend">주간 시간 = 정규(평일 8h) + 당직(24h) - (당일 평일 8h) - (다음날 평일 8h)${fillPriorityInput.checked ? ' · 충원우선: 72h 초과 허용' : ''}</div>
     <div class="${warn ? 'warn' : 'ok'}">${lines.join(' / ')}</div>
   `;
 }
@@ -153,7 +183,12 @@ function renderCalendar(result) {
           chip.textContent = d.name;
           dutiesEl.appendChild(chip);
         }
-        if (cellData.underfilled) td.classList.add('underfill');
+        if (cellData.underfilled) {
+          td.classList.add('underfill');
+          if (cellData.reasons && cellData.reasons.length) {
+            td.title = '미충원 사유\n' + cellData.reasons.join('\n');
+          }
+        }
       } else {
         // 범위 밖
         td.style.opacity = '0.3';
