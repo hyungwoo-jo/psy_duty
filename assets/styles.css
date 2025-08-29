@@ -78,6 +78,8 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .day {
   min-height: 88px;
 }
+.day.weekend { background: rgba(99, 102, 241, 0.08); }
+.day.holiday { background: rgba(244, 114, 182, 0.10); }
 .date { color: var(--muted); font-size: 12px; }
 .duties { margin-top: 6px; display: flex; flex-direction: column; gap: 4px; }
 .duty-chip {
@@ -93,3 +95,8 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .legend { color: var(--muted); font-size: 12px; }
 
+.report { margin-top: 12px; }
+.report-table { width: 100%; border-collapse: collapse; }
+.report-table th, .report-table td { border: 1px solid var(--grid); padding: 6px 8px; }
+.report-table th { background: #0f1318; color: var(--muted); text-align: left; }
+.report-table td.num { text-align: right; font-variant-numeric: tabular-nums; }

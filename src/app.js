@@ -9,6 +9,7 @@ const exportJsonBtn = document.querySelector('#export-json');
 const exportCsvBtn = document.querySelector('#export-csv');
 const messages = document.querySelector('#messages');
 const summary = document.querySelector('#summary');
+const report = document.querySelector('#report');
 const calendar = document.querySelector('#calendar');
 const holidaysInput = document.querySelector('#holidays');
 const unavailableInput = document.querySelector('#unavailable');
@@ -92,6 +93,7 @@ function onGenerate() {
     const result = generateSchedule({ startDate, weeks, employees, holidays, unavailableByName: Object.fromEntries(unavailable), fillPriority });
     lastResult = result;
     renderSummary(result);
+    renderReport(result);
     renderCalendar(result);
     exportJsonBtn.disabled = false;
     exportCsvBtn.disabled = false;
@@ -170,6 +172,11 @@ function renderCalendar(result) {
       const cellData = items.find((x) => x.key === key);
       const td = document.createElement('td');
       td.className = 'day';
+      const isWk = isWeekday(day);
+      const keyStr = fmtDate(day);
+      const isHol = (result.holidays || []).includes(keyStr);
+      if (isHol) td.classList.add('holiday');
+      else if (!isWk) td.classList.add('weekend');
       const dateEl = document.createElement('div');
       dateEl.className = 'date';
       dateEl.textContent = `${key}`;
@@ -200,6 +207,52 @@ function renderCalendar(result) {
     tbody.appendChild(bodyTr);
     table.appendChild(tbody);
     calendar.appendChild(table);
+  }
+}
+
+function renderReport(result) {
+  report.innerHTML = '';
+  const table = document.createElement('table');
+  table.className = 'report-table';
+  const thead = document.createElement('thead');
+  const thr = document.createElement('tr');
+  const hdrs = ['이름', '선호', '당직(회)', '당직시간(h)', 'Δ당직(h)', '총근무시간(h)', 'Δ총(h)'];
+  for (const h of hdrs) {
+    const th = document.createElement('th');
+    th.textContent = h;
+    thr.appendChild(th);
+  }
+  thead.appendChild(thr);
+  table.appendChild(thead);
+
+  const tbody = document.createElement('tbody');
+  for (const s of result.stats) {
+    const tr = document.createElement('tr');
+    const cells = [
+      s.name,
+      (result.employees.find((e) => e.id === s.id)?.preference || 'any'),
+      s.dutyCount,
+      s.dutyHours,
+      signed(s.dutyHoursDelta),
+      Math.round(s.totalHours),
+      signed(s.totalHoursDelta),
+    ];
+    cells.forEach((val, idx) => {
+      const td = document.createElement('td');
+      td.textContent = String(val);
+      if (idx >= 2) td.classList.add('num');
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+  report.appendChild(table);
+
+  if (result.warnings && result.warnings.length) {
+    const warn = document.createElement('div');
+    warn.className = 'warn';
+    warn.textContent = `경고 ${result.warnings.length}건: ` + result.warnings.join(' | ');
+    report.appendChild(warn);
   }
 }
 
