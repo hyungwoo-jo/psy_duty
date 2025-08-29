@@ -78,8 +78,10 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .day {
   min-height: 88px;
 }
-.day.weekend { background: rgba(99, 102, 241, 0.08); }
-.day.holiday { background: rgba(244, 114, 182, 0.10); }
+.day.weekend, .day.holiday {
+  background: rgba(34, 197, 94, 0.16); /* 더 선명한 녹색 톤 */
+  box-shadow: inset 0 0 0 2px rgba(34, 197, 94, 0.25);
+}
 .date { color: var(--muted); font-size: 12px; }
 .duties { margin-top: 6px; display: flex; flex-direction: column; gap: 4px; }
 .duty-chip {

@@ -163,9 +163,12 @@ export function generateSchedule({ startDate, weeks = 4, employees, holidays = [
     }
     pool = afterToday;
 
-    // 스코어링
+    // 스코어링 (공평성 강화: 전체 총근무시간을 우선 고려)
     const candidates = pool
-      .map((p) => ({ p, score: [p.dutyCount, p.weeklyHours[wk], -(index - p.lastDutyIndex)] }))
+      .map((p) => {
+        const totalHours = Object.values(p.weeklyHours).reduce((a, b) => a + b, 0);
+        return { p, score: [p.dutyCount, totalHours, p.weeklyHours[wk], -(index - p.lastDutyIndex)] };
+      })
       .sort((a, b) => {
         for (let i = 0; i < a.score.length; i += 1) {
           if (a.score[i] !== b.score[i]) return a.score[i] - b.score[i];
