@@ -91,6 +91,7 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
 
   // 선택적 최적화 (총근무시간/주별 편차 완화)
   const map = schedule.map((d) => d.duties.map((x) => x.id));
+  let regularsAlreadyApplied = false;
   if (optimization && optimization !== 'off') {
     const optimized = optimizeBySA({
       map,
@@ -111,6 +112,7 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
       }
       applyPeopleState(people, optimized.peopleSim);
       warnings.push(...optimized.warningsAfter);
+      regularsAlreadyApplied = true; // 평가 단계에서 정규(+11h×2) 이미 반영됨
     } else {
       for (const p of people) { collectWeeklyWarnings(p, warnings, WEEK_MAX); collectTotalWarning(p, warnings, p.totalCapHours); }
     }
@@ -141,8 +143,10 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
       })
       .map((x) => x.p);
     const pick = scored.slice(0, 2);
-    // 반영: 각 +11h
-    for (const p of pick) { p.weeklyHours[wk] = (p.weeklyHours[wk] || 0) + 11; }
+    // 반영: 각 +11h (최적화에서 이미 반영된 경우 중복 가산 방지)
+    if (!regularsAlreadyApplied) {
+      for (const p of pick) { p.weeklyHours[wk] = (p.weeklyHours[wk] || 0) + 11; }
+    }
     cell.regulars = pick.map((p) => ({ id: p.id, name: p.name }));
     // 평일 24h인 경우(정규+당직) 다음날 오프 표시
     const dutyIds = new Set(cell.duties.map((d) => d.id));
