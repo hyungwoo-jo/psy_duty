@@ -9,7 +9,7 @@
   <body>
     <header>
       <h1>당직표 생성기 (초안)</h1>
-      <p>규칙: 시작/종료일 범위 내 배치. 평일 정규근무 11h, 평일 당직 1명(+13h, 다음날 평일 -11h), 주말/공휴일 당직 2명(각 24h, 다음날 평일 -11h). 당직 다음날 24h 오프. 주당 72h 초과 금지.</p>
+      <p>규칙: 시작/종료일 범위 내 배치. 평일 정규근무 11h, 평일 당직 기본 1명(옵션으로 2명 선택 가능, 각 +13h, 다음날 평일 -11h), 주말/공휴일 당직 2명(각 24h, 다음날 평일 -11h). 당직 다음날 24h 오프. 주당 72h 초과 금지.</p>
     </header>
 
     <section class="controls">
@@ -30,6 +30,13 @@
         <select id="week-mode">
           <option value="calendar" selected>달력 기준(월–일)</option>
           <option value="start">시작일 기준 7일 단위</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="weekday-slots">평일 당직 인원</label>
+        <select id="weekday-slots">
+          <option value="1" selected>1명</option>
+          <option value="2">2명</option>
         </select>
       </div>
       <div class="field field--full">

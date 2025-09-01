@@ -16,6 +16,8 @@ const holidaysInput = document.querySelector('#holidays');
 const unavailableInput = document.querySelector('#unavailable');
 const vacationsInput = document.querySelector('#vacations');
 const optLevelSelect = document.querySelector('#opt-level');
+const weekModeSelect = document.querySelector('#week-mode');
+const weekdaySlotsSelect = document.querySelector('#weekday-slots');
 
 // 기본값: 다음 월요일
 setDefaultStartMonday();
@@ -94,8 +96,9 @@ function onGenerate() {
     const unavailable = parseUnavailable(unavailableInput.value);
     const optimization = (optLevelSelect.value || 'medium');
     const weekMode = (weekModeSelect?.value || 'calendar');
+    const weekdaySlots = Math.max(1, Math.min(2, Number(weekdaySlotsSelect?.value || 1)));
     const vacations = parseVacations(vacationsInput.value, (d) => weekKeyByMode(new Date(d), new Date(startDate), weekMode));
-    const result = generateSchedule({ startDate, endDate, weeks, weekMode, employees, holidays, unavailableByName: Object.fromEntries(unavailable), vacationWeeksByName: Object.fromEntries(vacations), optimization });
+    const result = generateSchedule({ startDate, endDate, weeks, weekMode, employees, holidays, unavailableByName: Object.fromEntries(unavailable), vacationWeeksByName: Object.fromEntries(vacations), optimization, weekdaySlots });
     lastResult = result;
     renderSummary(result);
     renderReport(result);
@@ -143,8 +146,10 @@ function renderSummary(result) {
     .join(' · ');
   lines.push(perTotal);
 
+  const wkdaySlots = result?.config?.weekdaySlots ?? 1;
+  const wkendSlots = result?.config?.weekendSlots ?? 2;
   summary.innerHTML = `
-    <div class="legend">시간 산식: 평일 정규 11h, 평일 당직 1명 +13h(다음날 평일 -11h), 주말/공휴일 당직 2명 각 +24h(다음날 평일 -11h). 주당 상한: 72h, 개인 총합 ≤ 72×(근무주수)</div>
+    <div class="legend">시간 산식: 평일 정규 11h, 평일 당직 ${wkdaySlots}명(각 +13h, 다음날 평일 -11h), 주말/공휴일 당직 ${wkendSlots}명(각 +24h, 다음날 평일 -11h). 주당 상한: 72h, 개인 총합 ≤ 72×(근무주수)</div>
     <div class="${warn ? 'warn' : 'ok'}">${lines.join(' / ')}</div>
   `;
 }
@@ -197,6 +202,14 @@ function renderCalendar(result) {
           chip.textContent = d.name;
           dutiesEl.appendChild(chip);
         }
+        // 평일 정규근무자 표시
+        if ((cellData.regulars && cellData.regulars.length) && isWk && !isHol) {
+          const regEl = document.createElement('div');
+          regEl.className = 'regulars';
+          const names = cellData.regulars.map((r) => r.name).join(', ');
+          regEl.textContent = '정규: ' + names;
+          dutiesEl.appendChild(regEl);
+        }
         if (cellData.underfilled) {
           td.classList.add('underfill');
           if (cellData.reasons && cellData.reasons.length) {
@@ -212,8 +225,8 @@ function renderCalendar(result) {
     }
     const tbody = document.createElement('tbody');
     tbody.appendChild(bodyTr);
-    table.appendChild(tbody);
-    calendar.appendChild(table);
+  table.appendChild(tbody);
+  calendar.appendChild(table);
   }
 }
 
@@ -263,6 +276,9 @@ function renderReport(result) {
     warn.textContent = `경고 ${result.warnings.length}건: ` + result.warnings.join(' | ');
     report.appendChild(warn);
   }
+
+  // 주별 시간 통계 테이블
+  renderWeeklyHours(result);
 }
 
 function onExportJson() {
@@ -331,9 +347,56 @@ function parseVacations(text, weekKeyFn = (d) => weekKey(new Date(d))) {
     const rest = m[2];
     const dates = (rest.match(/\d{4}-\d{2}-\d{2}/g) || []).map((d) => d.trim());
     if (!map.has(name)) map.set(name, new Set());
-const weekModeSelect = document.querySelector('#week-mode');
     const set = map.get(name);
     for (const d of dates) set.add(weekKeyFn(d));
   }
   return map;
+}
+
+function renderWeeklyHours(result) {
+  // 주 키 수집 및 정렬
+  const weekKeysSet = new Set();
+  for (const s of result.stats) {
+    for (const wk of Object.keys(s.weeklyHours || {})) weekKeysSet.add(wk);
+  }
+  const weekKeys = [...weekKeysSet].sort();
+  if (!weekKeys.length) return;
+
+  const wrap = document.createElement('div');
+  wrap.className = 'weekly-report';
+  const title = document.createElement('div');
+  title.className = 'legend';
+  title.textContent = '주별 시간 통계 (h)';
+  wrap.appendChild(title);
+
+  const table = document.createElement('table');
+  table.className = 'report-table';
+
+  const thead = document.createElement('thead');
+  const thr = document.createElement('tr');
+  const headers = ['이름', ...weekKeys, '합계'];
+  for (const h of headers) {
+    const th = document.createElement('th');
+    th.textContent = h;
+    thr.appendChild(th);
+  }
+  thead.appendChild(thr);
+  table.appendChild(thead);
+
+  const tbody = document.createElement('tbody');
+  for (const s of result.stats) {
+    const tr = document.createElement('tr');
+    const total = Math.round(s.totalHours);
+    const cells = [s.name, ...weekKeys.map((wk) => Math.round(s.weeklyHours[wk] || 0)), total];
+    cells.forEach((val, idx) => {
+      const td = document.createElement('td');
+      td.textContent = String(val);
+      if (idx >= 1) td.classList.add('num');
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+  wrap.appendChild(table);
+  report.appendChild(wrap);
 }

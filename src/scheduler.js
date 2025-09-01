@@ -10,7 +10,7 @@ import { addDays, isWorkday, weekKey, fmtDate, rangeDays, weekKeyByMode, allWeek
 
 // preference: 'any' | 'weekday' | 'weekend'
 // optimization: 'off' | 'fast' | 'medium' | 'strong'
-export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMode = 'calendar', employees, holidays = [], unavailableByName = {}, vacationWeeksByName = {}, optimization = 'medium' }) {
+export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMode = 'calendar', employees, holidays = [], unavailableByName = {}, vacationWeeksByName = {}, optimization = 'medium', weekdaySlots = 1, weekendSlots = 2 }) {
   if (!employees || employees.length < 2) {
     throw new Error('근무자는 2명 이상 필요합니다.');
   }
@@ -70,7 +70,7 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
   const warnings = [];
   for (let i = 0; i < schedule.length; i += 1) {
     const cell = schedule[i];
-    const slots = isWorkday(cell.date, holidaySet) ? 1 : 2; // 평일 1명, 주말/공휴일 2명
+    const slots = isWorkday(cell.date, holidaySet) ? Math.max(1, Math.min(2, weekdaySlots)) : Math.max(1, weekendSlots);
     for (let slot = 0; slot < slots; slot += 1) {
       const result = pickCandidate({ index: i, date: cell.date, schedule, people, holidaySet });
 
@@ -116,6 +116,22 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
     for (const p of people) { collectWeeklyWarnings(p, warnings, WEEK_MAX); collectTotalWarning(p, warnings, p.totalCapHours); }
   }
 
+  // 평일 정규근무자 산출 (최종 배정 상태 기준)
+  for (let i = 0; i < schedule.length; i += 1) {
+    const cell = schedule[i];
+    const d = cell.date;
+    if (!isWorkday(d, holidaySet)) { cell.regulars = []; continue; }
+    const wk = weekKeyByMode(d, start, weekMode);
+    const key = fmtDate(d);
+    const regs = [];
+    for (const p of people) {
+      if (p.vacationWeeks && p.vacationWeeks.has(wk)) continue; // 휴가 주 제외
+      if (p.offDayKeys && p.offDayKeys.has(key)) continue;      // 전일 당직 오프
+      regs.push({ id: p.id, name: p.name });
+    }
+    cell.regulars = regs;
+  }
+
   // 공정성 지표: 당직 시간의 평균 대비 편차
   const totalDutyHours = people.reduce((acc, p) => acc + (p._dutyHoursAccum || 0), 0);
   const avgDutyHours = totalDutyHours / people.length;
@@ -130,6 +146,7 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
     employees: people.map((p) => ({ id: p.id, name: p.name, preference: p.preference })),
     endDate: endDate ? fmtDate(addDays(start, totalDays - 1)) : null,
     schedule,
+    config: { weekdaySlots: Math.max(1, Math.min(2, weekdaySlots)), weekendSlots: Math.max(1, weekendSlots) },
     warnings,
     stats: people.map((p, i) => ({
       id: p.id,
