@@ -159,8 +159,8 @@ function renderCalendar(result) {
   const start = new Date(result.startDate);
   const days = result.schedule.map((s) => new Date(s.date));
 
-  // 주별로 테이블 생성
-  const weeks = groupBy(result.schedule, (d) => d.weekKey);
+  // 주별로 테이블 생성 (UI는 항상 달력 주(월–일) 기준으로 그룹핑)
+  const weeks = groupBy(result.schedule, (d) => weekKey(new Date(d.date)));
   for (const [wk, items] of weeks) {
     const table = document.createElement('table');
     table.className = 'week-grid';
