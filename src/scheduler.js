@@ -93,25 +93,23 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
   const map = schedule.map((d) => d.duties.map((x) => x.id));
   let regularsAlreadyApplied = false;
   if (optimization && optimization !== 'off') {
-    const optimized = optimizeBySA({
-      map,
-      days,
-      people,
-      weekKeys,
-      start,
-      totalDays,
-      holidaySet,
-      level: optimization,
-    });
-    if (optimized && optimized.accepted) {
+    const attempts = optimization === 'strong' ? 8 : (optimization === 'medium' ? 3 : 1);
+    let bestOpt = null;
+    for (let t = 0; t < attempts; t += 1) {
+      const res = optimizeBySA({ map, days, people, weekKeys, start, totalDays, holidaySet, level: optimization });
+      if (res && res.accepted) {
+        if (!bestOpt || res.objective < bestOpt.objective) bestOpt = res;
+      }
+    }
+    if (bestOpt) {
       for (let i = 0; i < schedule.length; i += 1) {
-        schedule[i].duties = (optimized.map[i] || []).map((id) => {
+        schedule[i].duties = (bestOpt.map[i] || []).map((id) => {
           const p = people.find((pp) => pp.id === id);
           return { id: p.id, name: p.name };
         });
       }
-      applyPeopleState(people, optimized.peopleSim);
-      warnings.push(...optimized.warningsAfter);
+      applyPeopleState(people, bestOpt.peopleSim);
+      warnings.push(...bestOpt.warningsAfter);
       regularsAlreadyApplied = true; // 평가 단계에서 정규(+11h×2) 이미 반영됨
     } else {
       for (const p of people) { collectWeeklyWarnings(p, warnings, WEEK_MAX); collectTotalWarning(p, warnings, p.totalCapHours); }
@@ -459,9 +457,17 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
       }
       const totals = sim.map((p) => Object.values(p.weeklyHours).reduce((a, b) => a + b, 0));
       const avg = totals.reduce((a, b) => a + b, 0) / sim.length;
-      // 목적함수: 개인 총 근무시간 분산만 최소화
+      // 목적함수: 1순위 총 근무시간 분산, 2순위 개인 내 주별 편차
       const varTotal = totals.reduce((acc, t) => acc + (t - avg) * (t - avg), 0);
-      const objective = varTotal;
+      let smooth = 0;
+      // 개인별로 주간 시간의 분산을 합산(주별 편차가 작을수록 작아짐)
+      for (const p of sim) {
+        const vals = weekKeys.map((wk) => p.weeklyHours[wk] || 0);
+        const m = vals.reduce((a, b) => a + b, 0) / vals.length;
+        smooth += vals.reduce((acc, v) => acc + (v - m) * (v - m), 0);
+      }
+      const WEIGHTS = { total: 1.0, smooth: 0.5 };
+      const objective = WEIGHTS.total * varTotal + WEIGHTS.smooth * smooth;
       return { valid: true, objective, peopleSim: sim, warnings: warningsSim };
     }
   }

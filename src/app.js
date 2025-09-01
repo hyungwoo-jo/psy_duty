@@ -94,7 +94,7 @@ function onGenerate() {
 
     const holidays = [...parseHolidays(holidaysInput.value)];
     const unavailable = parseUnavailable(unavailableInput.value);
-    const optimization = (optLevelSelect.value || 'medium');
+    const optimization = (optLevelSelect?.value || 'strong');
     const weekMode = (weekModeSelect?.value || 'calendar');
     const weekdaySlots = Math.max(1, Math.min(2, Number(weekdaySlotsSelect?.value || 1)));
     const vacations = parseVacations(vacationsInput.value, (d) => weekKeyByMode(new Date(d), new Date(startDate), weekMode));
