@@ -6,11 +6,11 @@
 //   * 정규근무: 월–금 8시간 가정
 //   * 당직: 24시간 가정
 
-import { addDays, isWorkday, weekKey, fmtDate, rangeDays } from './time.js';
+import { addDays, isWorkday, weekKey, fmtDate, rangeDays, weekKeyByMode, allWeekKeysInRange } from './time.js';
 
 // preference: 'any' | 'weekday' | 'weekend'
 // optimization: 'off' | 'fast' | 'medium' | 'strong'
-export function generateSchedule({ startDate, weeks = 4, employees, holidays = [], unavailableByName = {}, vacationWeeksByName = {}, optimization = 'medium' }) {
+export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMode = 'calendar', employees, holidays = [], unavailableByName = {}, vacationWeeksByName = {}, optimization = 'medium' }) {
   if (!employees || employees.length < 2) {
     throw new Error('근무자는 2명 이상 필요합니다.');
   }
@@ -18,15 +18,20 @@ export function generateSchedule({ startDate, weeks = 4, employees, holidays = [
   const start = new Date(startDate);
   if (Number.isNaN(start.getTime())) throw new Error('시작일이 올바르지 않습니다.');
 
-  const totalDays = weeks * 7;
+  let totalDays = weeks * 7;
+  if (endDate) {
+    const s = new Date(startDate);
+    const e = new Date(endDate);
+    if (Number.isNaN(e.getTime())) throw new Error('종료일이 올바르지 않습니다.');
+    if (e < s) throw new Error('종료일이 시작일보다 빠릅니다.');
+    totalDays = Math.floor((e - s) / (1000 * 60 * 60 * 24)) + 1;
+  }
   const days = rangeDays(start, totalDays);
   const holidaySet = new Set(holidays);
-  const WEEK_MAX = 72 + 12; // 주당 상한 (72±12 허용: 상한 84)
-  const TOTAL_MAX = 72 * weeks; // 총합 상한 (평균 72 유지)
+  const WEEK_MAX = 72; // 주당 상한 72h (엄격)
 
   // 주 단위 키 추출 (월요일 시작)
-  const allWeekKeys = new Set(days.map((d) => weekKey(d)));
-  const weekKeys = [...allWeekKeys];
+  const weekKeys = allWeekKeysInRange(start, totalDays, weekMode);
 
   // 직원 상태 초기화
   const people = employees.map((emp, idx) => ({
@@ -34,9 +39,11 @@ export function generateSchedule({ startDate, weeks = 4, employees, holidays = [
     name: typeof emp === 'string' ? emp : emp.name,
     preference: normalizePref(typeof emp === 'string' ? 'any' : emp.preference),
     weeklyHours: Object.fromEntries(
-      weekKeys.map((wk) => [wk, baselineRegularForWeek(wk, start, totalDays, holidaySet, (vacationWeeksByName[(typeof emp === 'string' ? emp : emp.name)] || []).includes(wk))])
+      weekKeys.map((wk) => [wk, baselineRegularForWeek(wk, start, totalDays, holidaySet, weekMode, (vacationWeeksByName[(typeof emp === 'string' ? emp : emp.name)] || []).includes(wk))])
     ),
     dutyCount: 0,
+    weekdayDutyCount: 0,
+    weekendDutyCount: 0,
     lastDutyIndex: -999,
     offDayKeys: new Set(), // 당직 다음날 (정규근무 오프, 당직 불가)
     unavailable: new Set(unavailableByName[(typeof emp === 'string' ? emp : emp.name)] || []),
@@ -53,7 +60,7 @@ export function generateSchedule({ startDate, weeks = 4, employees, holidays = [
   const schedule = days.map((date, idx) => ({
     date,
     key: fmtDate(date),
-    weekKey: weekKey(date),
+    weekKey: weekKeyByMode(date, start, weekMode),
     duties: [], // [{id, name}]
     underfilled: false,
     reasons: [],
@@ -63,7 +70,8 @@ export function generateSchedule({ startDate, weeks = 4, employees, holidays = [
   const warnings = [];
   for (let i = 0; i < schedule.length; i += 1) {
     const cell = schedule[i];
-    for (let slot = 0; slot < 2; slot += 1) {
+    const slots = isWorkday(cell.date, holidaySet) ? 1 : 2; // 평일 1명, 주말/공휴일 2명
+    for (let slot = 0; slot < slots; slot += 1) {
       const result = pickCandidate({ index: i, date: cell.date, schedule, people, holidaySet });
 
       if (!result.person) {
@@ -109,7 +117,7 @@ export function generateSchedule({ startDate, weeks = 4, employees, holidays = [
   }
 
   // 공정성 지표: 당직 시간의 평균 대비 편차
-  const totalDutyHours = people.reduce((acc, p) => acc + p.dutyCount * 24, 0);
+  const totalDutyHours = people.reduce((acc, p) => acc + (p._dutyHoursAccum || 0), 0);
   const avgDutyHours = totalDutyHours / people.length;
   const totals = people.map((p) => Object.values(p.weeklyHours).reduce((a, b) => a + b, 0));
   const totalSum = totals.reduce((a, b) => a + b, 0);
@@ -120,16 +128,19 @@ export function generateSchedule({ startDate, weeks = 4, employees, holidays = [
     weeks,
     holidays: [...holidaySet],
     employees: people.map((p) => ({ id: p.id, name: p.name, preference: p.preference })),
+    endDate: endDate ? fmtDate(addDays(start, totalDays - 1)) : null,
     schedule,
     warnings,
     stats: people.map((p, i) => ({
       id: p.id,
       name: p.name,
       dutyCount: p.dutyCount,
-      dutyHours: p.dutyCount * 24,
+      weekdayDutyCount: p.weekdayDutyCount,
+      weekendDutyCount: p.weekendDutyCount,
+      dutyHours: Math.round((p._dutyHoursAccum || 0)),
       weeklyHours: p.weeklyHours,
       totalHours: totals[i],
-      dutyHoursDelta: round1(p.dutyCount * 24 - avgDutyHours),
+      dutyHoursDelta: round1((p._dutyHoursAccum || 0) - avgDutyHours),
       totalHoursDelta: round1(totals[i] - avgTotalHours),
     })),
     fairness: { avgDutyHours: round1(avgDutyHours), totalDutyHours, avgTotalHours: round1(avgTotalHours) },
@@ -149,27 +160,27 @@ export function generateSchedule({ startDate, weeks = 4, employees, holidays = [
     if (total > TOTAL_MAX_VAL + 1e-9) warningsArr.push(`${p.name}의 총합 시간이 ${TOTAL_MAX_VAL}h를 초과했습니다: ${Math.round(total)}h`);
   }
 
-  function baselineRegularForWeek(wk, start, totalDays, holidaySet, onVacation = false) {
+  function baselineRegularForWeek(wk, start, totalDays, holidaySet, mode, onVacation = false) {
     if (onVacation) return 0;
     // 주 내에서 이 범위에 포함된 평일 수 * 8h
     const [y, m, d] = wk.split('-').map((v) => parseInt(v, 10));
-    // wk는 해당 주의 월요일 날짜 문자열
-    const monday = new Date(y, m - 1, d);
+    // wk는 해당 주의 시작 날짜 문자열 (mode에 따라 월요일 또는 시작일 기준 7일 단위)
+    const weekStart = new Date(y, m - 1, d);
     let hours = 0;
     for (let i = 0; i < 7; i += 1) {
-      const dt = addDays(monday, i);
+      const dt = addDays(weekStart, i);
       // 범위 내인지
       const inRange = dt >= start && dt < addDays(start, totalDays);
-      if (inRange && isWorkday(dt, holidaySet)) hours += 8;
+      if (inRange && isWorkday(dt, holidaySet)) hours += 11; // 평일 정규 11h
     }
     return hours;
   }
 
   function pickCandidate({ index, date, schedule, people, holidaySet }) {
     const todayKey = fmtDate(date);
-    const wk = weekKey(date);
+    const wk = weekKeyByMode(date, start, weekMode);
     const next = addDays(date, 1);
-    const nextWk = weekKey(next);
+    const nextWk = weekKeyByMode(next, start, weekMode);
     const isNextWorkday = isWorkday(next, holidaySet);
     const isTodayWorkday = isWorkday(date, holidaySet);
 
@@ -195,10 +206,11 @@ export function generateSchedule({ startDate, weeks = 4, employees, holidays = [
     for (const p of pool) ((p.vacationWeeks && p.vacationWeeks.has(wk)) ? stage.vacation : afterVacation).push(p);
     pool = afterVacation;
 
-    // 오늘 주간 상한 체크 (완화 모드에서는 건너뜀)
+    // 오늘 주간 상한 체크
     const afterToday = [];
     for (const p of pool) {
-      const simToday = p.weeklyHours[wk] + 24 - (isTodayWorkday ? 8 : 0);
+      const addDuty = isTodayWorkday ? 13 : 24; // 평일+13h, 휴일/주말+24h
+      const simToday = (p.weeklyHours[wk] ?? 0) + addDuty; // 평일 당일 정규 11h는 유지 (대체 X)
       if (simToday > WEEK_MAX + 1e-9) stage.overWeek_today.push(p); else afterToday.push(p);
     }
     pool = afterToday;
@@ -219,11 +231,11 @@ export function generateSchedule({ startDate, weeks = 4, employees, holidays = [
 
     for (const p of candidates) {
       const nextHours = p.weeklyHours[nextWk] ?? 0;
-      const simNext = isNextWorkday ? nextHours - 8 : nextHours;
+      const simNext = isNextWorkday ? Math.max(0, nextHours - 11) : nextHours; // 다음날 평일 오프 -11h
       if (simNext > WEEK_MAX + 1e-9) { stage.overWeek_next.push(p); continue; }
       // 총합 상한 체크 (당일/다음날 효과 델타 반영)
       const totalNow = Object.values(p.weeklyHours).reduce((a, b) => a + b, 0);
-      const deltaTotal = 24 - (isTodayWorkday ? 8 : 0) - (isNextWorkday ? 8 : 0);
+      const deltaTotal = (isTodayWorkday ? 13 : 24) - (isNextWorkday ? 11 : 0);
       const totalCap = p.totalCapHours ?? (72 * weeks); // fallback
       if (totalNow + deltaTotal > totalCap + 1e-9) { stage.overTotal.push(p); continue; }
       return { person: p, reasons: [] };
@@ -241,23 +253,22 @@ export function generateSchedule({ startDate, weeks = 4, employees, holidays = [
   }
 
   function applyAssignment({ person, index, date, holidaySet }) {
-    const wk = weekKey(date);
-    person.weeklyHours[wk] = (person.weeklyHours[wk] ?? 0) + 24;
-    if (isWorkday(date, holidaySet)) {
-      // 당일이 평일이면 정규 8h가 당직으로 대체되므로 8h 감산
-      person.weeklyHours[wk] = Math.max(0, person.weeklyHours[wk] - 8);
-    }
+    const wk = weekKeyByMode(date, start, weekMode);
+    const isTodayWorkday = isWorkday(date, holidaySet);
+    const addDuty = isTodayWorkday ? 13 : 24;
+    person.weeklyHours[wk] = Math.max(0, (person.weeklyHours[wk] ?? 0) + addDuty);
+    person._dutyHoursAccum = (person._dutyHoursAccum || 0) + addDuty;
     person.dutyCount += 1;
+    if (isTodayWorkday) person.weekdayDutyCount += 1; else person.weekendDutyCount += 1;
     person.lastDutyIndex = index;
 
     // 다음날 오프(평일이면 해당 주간 8h 감산), 당일+다음날 당직 금지 관리용 offDay 표시
     const next = addDays(date, 1);
     const nKey = fmtDate(next);
     person.offDayKeys.add(nKey);
-    const nWk = weekKey(next);
+    const nWk = weekKeyByMode(next, start, weekMode);
     if (isWorkday(next, holidaySet)) {
-      person.weeklyHours[nWk] = (person.weeklyHours[nWk] ?? 0) - 8;
-      if (person.weeklyHours[nWk] < 0) person.weeklyHours[nWk] = 0; // 바운드
+      person.weeklyHours[nWk] = Math.max(0, (person.weeklyHours[nWk] ?? 0) - 11); // 다음날 평일 -11h
     }
   }
 
@@ -373,9 +384,12 @@ export function generateSchedule({ startDate, weeks = 4, employees, holidays = [
         vacationWeeks: p.vacationWeeks,
         totalCapHours: p.totalCapHours,
         weeklyHours: Object.fromEntries(
-          weekKeys.map((wk) => [wk, baselineRegularForWeek(wk, start, totalDays, holidaySet, p.vacationWeeks.has(wk))])
+          weekKeys.map((wk) => [wk, baselineRegularForWeek(wk, start, totalDays, holidaySet, weekMode, p.vacationWeeks.has(wk))])
         ),
         dutyCount: 0,
+        weekdayDutyCount: 0,
+        weekendDutyCount: 0,
+        _dutyHoursAccum: 0,
         lastDutyIndex: -999,
         offDayKeys: new Set(),
       }));
@@ -383,7 +397,7 @@ export function generateSchedule({ startDate, weeks = 4, employees, holidays = [
       const warningsSim = [];
       for (let d = 0; d < days.length; d += 1) {
         const date = days[d];
-        const wk = weekKey(date);
+        const wk = weekKeyByMode(date, start, weekMode);
         const todayKey = fmtDate(date);
         const isTodayWorkday = isWorkday(date, holidaySet);
         const ids = assignMap[d] || [];
@@ -398,19 +412,22 @@ export function generateSchedule({ startDate, weeks = 4, employees, holidays = [
           if (p.unavailable && p.unavailable.has(todayKey)) return { valid: false };
           if (p.vacationWeeks && p.vacationWeeks.has(wk)) return { valid: false };
           if (!allowByPreference(p.preference, isTodayWorkday)) return { valid: false };
-          const simToday = p.weeklyHours[wk] + 24 - (isTodayWorkday ? 8 : 0);
+          const addDuty = isTodayWorkday ? 13 : 24;
+          const simToday = (p.weeklyHours[wk] ?? 0) + addDuty;
           if (simToday > WEEK_MAX + 1e-9) return { valid: false };
           // 적용
           p.weeklyHours[wk] = Math.max(0, simToday);
           p.dutyCount += 1;
+          if (isTodayWorkday) p.weekdayDutyCount += 1; else p.weekendDutyCount += 1;
+          p._dutyHoursAccum += addDuty;
           p.lastDutyIndex = d;
           // 다음날 오프 및 다음날 평일 감산
           const next = addDays(date, 1);
           const nKey = fmtDate(next);
           p.offDayKeys.add(nKey);
           if (isWorkday(next, holidaySet)) {
-            const nWk = weekKey(next);
-            p.weeklyHours[nWk] = Math.max(0, (p.weeklyHours[nWk] ?? 0) - 8);
+            const nWk = weekKeyByMode(next, start, weekMode);
+            p.weeklyHours[nWk] = Math.max(0, (p.weeklyHours[nWk] ?? 0) - 11);
           }
         }
       }
@@ -424,7 +441,13 @@ export function generateSchedule({ startDate, weeks = 4, employees, holidays = [
       }
       const totals = sim.map((p) => Object.values(p.weeklyHours).reduce((a, b) => a + b, 0));
       const avg = totals.reduce((a, b) => a + b, 0) / sim.length;
-      const objective = totals.reduce((acc, t) => acc + (t - avg) * (t - avg), 0);
+      // 공정성: 총근무시간 분산 + 평일/주말 당직 편차 가중
+      const varTotal = totals.reduce((acc, t) => acc + (t - avg) * (t - avg), 0);
+      const avgWkday = sim.reduce((a, p) => a + p.weekdayDutyCount, 0) / sim.length;
+      const avgWkend = sim.reduce((a, p) => a + p.weekendDutyCount, 0) / sim.length;
+      const varWkday = sim.reduce((a, p) => a + (p.weekdayDutyCount - avgWkday) ** 2, 0);
+      const varWkend = sim.reduce((a, p) => a + (p.weekendDutyCount - avgWkend) ** 2, 0);
+      const objective = varTotal + 5 * (varWkday + varWkend);
       return { valid: true, objective, peopleSim: sim, warnings: warningsSim };
     }
   }
@@ -433,6 +456,9 @@ export function generateSchedule({ startDate, weeks = 4, employees, holidays = [
     for (let i = 0; i < target.length; i += 1) {
       target[i].weeklyHours = source[i].weeklyHours;
       target[i].dutyCount = source[i].dutyCount;
+      target[i].weekdayDutyCount = source[i].weekdayDutyCount;
+      target[i].weekendDutyCount = source[i].weekendDutyCount;
+      target[i]._dutyHoursAccum = source[i]._dutyHoursAccum;
       target[i].lastDutyIndex = source[i].lastDutyIndex;
       target[i].offDayKeys = source[i].offDayKeys;
     }

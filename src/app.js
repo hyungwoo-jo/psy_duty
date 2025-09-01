@@ -1,8 +1,9 @@
 import { generateSchedule } from './scheduler.js';
-import { fmtDate, addDays, isWeekday, rangeDays, weekKey } from './time.js';
+import { fmtDate, addDays, isWeekday, rangeDays, weekKey, weekKeyByMode } from './time.js';
 
 const startInput = document.querySelector('#start-date');
 const weeksInput = document.querySelector('#weeks');
+const endInput = document.querySelector('#end-date');
 const employeesInput = document.querySelector('#employees');
 const generateBtn = document.querySelector('#generate');
 const exportJsonBtn = document.querySelector('#export-json');
@@ -86,13 +87,15 @@ function onGenerate() {
     messages.textContent = '';
     const startDate = startInput.value;
     const weeks = Math.max(1, Math.min(8, Number(weeksInput.value || 4)));
+    const endDate = endInput.value || null;
     const employees = parseEmployees(employeesInput.value);
 
     const holidays = [...parseHolidays(holidaysInput.value)];
     const unavailable = parseUnavailable(unavailableInput.value);
     const optimization = (optLevelSelect.value || 'medium');
-    const vacations = parseVacations(vacationsInput.value);
-    const result = generateSchedule({ startDate, weeks, employees, holidays, unavailableByName: Object.fromEntries(unavailable), vacationWeeksByName: Object.fromEntries(vacations), optimization });
+    const weekMode = (weekModeSelect?.value || 'calendar');
+    const vacations = parseVacations(vacationsInput.value, (d) => weekKeyByMode(new Date(d), new Date(startDate), weekMode));
+    const result = generateSchedule({ startDate, endDate, weeks, weekMode, employees, holidays, unavailableByName: Object.fromEntries(unavailable), vacationWeeksByName: Object.fromEntries(vacations), optimization });
     lastResult = result;
     renderSummary(result);
     renderReport(result);
@@ -141,7 +144,7 @@ function renderSummary(result) {
   lines.push(perTotal);
 
   summary.innerHTML = `
-    <div class="legend">주간 시간 = 정규(평일 8h) + 당직(24h) - (당일 평일 8h) - (다음날 평일 8h) · 목표 72±12h/주, 개인 총합 ≤ 72×(근무주수)</div>
+    <div class="legend">시간 산식: 평일 정규 11h, 평일 당직 1명 +13h(다음날 평일 -11h), 주말/공휴일 당직 2명 각 +24h(다음날 평일 -11h). 주당 상한: 72h, 개인 총합 ≤ 72×(근무주수)</div>
     <div class="${warn ? 'warn' : 'ok'}">${lines.join(' / ')}</div>
   `;
 }
@@ -220,7 +223,7 @@ function renderReport(result) {
   table.className = 'report-table';
   const thead = document.createElement('thead');
   const thr = document.createElement('tr');
-  const hdrs = ['이름', '선호', '당직(회)', '당직시간(h)', 'Δ당직(h)', '총근무시간(h)', 'Δ총(h)'];
+  const hdrs = ['이름', '선호', '당직(회)', '평일당직(회)', '주말당직(회)', '당직시간(h)', 'Δ당직(h)', '총근무시간(h)', 'Δ총(h)'];
   for (const h of hdrs) {
     const th = document.createElement('th');
     th.textContent = h;
@@ -236,6 +239,8 @@ function renderReport(result) {
       s.name,
       (result.employees.find((e) => e.id === s.id)?.preference || 'any'),
       s.dutyCount,
+      s.weekdayDutyCount,
+      s.weekendDutyCount,
       s.dutyHours,
       signed(s.dutyHoursDelta),
       Math.round(s.totalHours),
@@ -293,6 +298,7 @@ function download(filename, content) {
 }
 
 function endDateOf(result) {
+  if (result.endDate) return result.endDate;
   const start = new Date(result.startDate);
   const end = addDays(start, result.weeks * 7 - 1);
   return fmtDate(end);
@@ -312,7 +318,7 @@ function signed(n) {
   return (n > 0 ? '+' : '') + n;
 }
 
-function parseVacations(text) {
+function parseVacations(text, weekKeyFn = (d) => weekKey(new Date(d))) {
   // 형식: 이름: YYYY-MM-DD, YYYY-MM-DD ...  (각 날짜가 속한 주 전체 휴가)
   const map = new Map();
   const lines = text.split(/\r?\n/);
@@ -325,8 +331,9 @@ function parseVacations(text) {
     const rest = m[2];
     const dates = (rest.match(/\d{4}-\d{2}-\d{2}/g) || []).map((d) => d.trim());
     if (!map.has(name)) map.set(name, new Set());
+const weekModeSelect = document.querySelector('#week-mode');
     const set = map.get(name);
-    for (const d of dates) set.add(weekKey(new Date(d)));
+    for (const d of dates) set.add(weekKeyFn(d));
   }
   return map;
 }

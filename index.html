@@ -9,7 +9,7 @@
   <body>
     <header>
       <h1>당직표 생성기 (초안)</h1>
-      <p>규칙: 하루 2명 당직, 당직 다음날 오프, 주간 72시간 초과 금지 (정규근무 월–금 8시간 가정).</p>
+      <p>규칙: 시작/종료일 범위 내 배치. 평일 정규근무 11h, 평일 당직 1명(+13h, 다음날 평일 -11h), 주말/공휴일 당직 2명(각 24h, 다음날 평일 -11h). 당직 다음날 24h 오프. 주당 72h 초과 금지.</p>
     </header>
 
     <section class="controls">
@@ -18,8 +18,19 @@
         <input id="start-date" type="date" />
       </div>
       <div class="field">
-        <label for="weeks">주 수</label>
+        <label for="end-date">종료일</label>
+        <input id="end-date" type="date" />
+      </div>
+      <div class="field">
+        <label for="weeks">주 수(종료일 미지정 시)</label>
         <input id="weeks" type="number" min="1" max="8" value="4" />
+      </div>
+      <div class="field">
+        <label for="week-mode">주 계산</label>
+        <select id="week-mode">
+          <option value="calendar" selected>달력 기준(월–일)</option>
+          <option value="start">시작일 기준 7일 단위</option>
+        </select>
       </div>
       <div class="field field--full">
         <label for="employees">근무자 목록 (이름, 선호옵션)</label>
@@ -48,6 +59,13 @@
 한지우, any
 노예린, weekday</textarea>
       </div>
+      <script>
+        // 초기 기본 근무자: A, B, C, D
+        window.addEventListener('DOMContentLoaded', () => {
+          const el = document.querySelector('#employees');
+          if (el) el.value = 'A, any\nB, any\nC, any\nD, any';
+        });
+      </script>
       <div class="field field--full">
         <label for="holidays">공휴일 지정 (YYYY-MM-DD, 한 줄에 한 개)</label>
         <textarea id="holidays" rows="4" placeholder="예시:
