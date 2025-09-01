@@ -202,12 +202,13 @@ function renderCalendar(result) {
           chip.textContent = d.name;
           dutiesEl.appendChild(chip);
         }
-        // 평일 정규근무자 표시
-        if ((cellData.regulars && cellData.regulars.length) && isWk && !isHol) {
+        // 평일 정규근무자 표시 (0~2명, 항상 라벨 노출)
+        if (isWk && !isHol) {
           const regEl = document.createElement('div');
           regEl.className = 'regulars';
-          const names = cellData.regulars.map((r) => r.name).join(', ');
-          regEl.textContent = '정규: ' + names;
+          const regs = Array.isArray(cellData.regulars) ? cellData.regulars : [];
+          const names = regs.map((r) => r.name).join(', ');
+          regEl.textContent = '정규: ' + (names || '-');
           dutiesEl.appendChild(regEl);
         }
         if (cellData.underfilled) {

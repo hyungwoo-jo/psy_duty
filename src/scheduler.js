@@ -63,6 +63,7 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
     key: fmtDate(date),
     weekKey: weekKeyByMode(date, start, weekMode),
     duties: [], // [{id, name}]
+    regulars: [], // [{id, name}] — 평일 정규 2명
     underfilled: false,
     reasons: [],
   }));
