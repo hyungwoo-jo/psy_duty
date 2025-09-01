@@ -149,7 +149,7 @@ function renderSummary(result) {
   const wkdaySlots = result?.config?.weekdaySlots ?? 1;
   const wkendSlots = result?.config?.weekendSlots ?? 2;
   summary.innerHTML = `
-    <div class="legend">시간 산식: 평일 정규 11h, 평일 당직 ${wkdaySlots}명(각 +13h, 다음날 평일 -11h), 주말/공휴일 당직 ${wkendSlots}명(각 +24h, 다음날 평일 -11h). 주당 상한: 72h, 개인 총합 ≤ 72×(근무주수)</div>
+    <div class="legend">시간 산식: 평일 정규 11h(2명), 평일 당직 ${wkdaySlots}명(각 +13h, 정규와 병행 시 24h), 주말/공휴일 당직 ${wkendSlots}명(각 24h). 당직 다음날 24h 오프. 주당 상한: 72h, 개인 총합 ≤ 72×(근무주수)</div>
     <div class="${warn ? 'warn' : 'ok'}">${lines.join(' / ')}</div>
   `;
 }

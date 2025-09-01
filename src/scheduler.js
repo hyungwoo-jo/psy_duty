@@ -128,7 +128,9 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
     const pool = people
       .filter((p) => !(p.vacationWeeks && p.vacationWeeks.has(wk)))
       .filter((p) => !(p.offDayKeys && p.offDayKeys.has(key)))
-      .filter((p) => !(p.unavailable && p.unavailable.has(key)));
+      .filter((p) => !(p.unavailable && p.unavailable.has(key)))
+      // 주당 72h 상한: 정규 11h 추가 시 초과하는 인원은 제외
+      .filter((p) => ((p.weeklyHours[wk] || 0) + 11) <= WEEK_MAX + 1e-9);
     // 스코어: 주 누적 → 총 누적 → 당직횟수 → 최근성
     const scored = pool.map((p) => {
         const totalHours = Object.values(p.weeklyHours).reduce((a, b) => a + b, 0);
@@ -465,6 +467,12 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
 
       // 주간 경고 집계 및 목적함수 계산
       for (const p of sim) collectWeeklyWarnings(p, warningsSim, WEEK_MAX);
+      // 정규 반영 이후 주간 상한 위반은 불가로 처리
+      for (const p of sim) {
+        for (const wk of weekKeys) {
+          if ((p.weeklyHours[wk] || 0) > WEEK_MAX + 1e-9) return { valid: false };
+        }
+      }
       // 총합 상한 검사 (개인별 cap)
       for (const p of sim) {
         const total = Object.values(p.weeklyHours).reduce((a, b) => a + b, 0);
