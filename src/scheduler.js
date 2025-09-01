@@ -473,20 +473,9 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
       }
       const totals = sim.map((p) => Object.values(p.weeklyHours).reduce((a, b) => a + b, 0));
       const avg = totals.reduce((a, b) => a + b, 0) / sim.length;
-      // 공정성: 총근무시간 분산 + 주별 분산(사람 간) + 평일/주말 당직 균형(낮은 가중)
+      // 목적함수: 개인 총 근무시간 분산만 최소화
       const varTotal = totals.reduce((acc, t) => acc + (t - avg) * (t - avg), 0);
-      let weeklyVar = 0;
-      for (const wk of weekKeys) {
-        const vals = sim.map((p) => p.weeklyHours[wk] || 0);
-        const m = vals.reduce((a, b) => a + b, 0) / vals.length;
-        weeklyVar += vals.reduce((acc, v) => acc + (v - m) * (v - m), 0);
-      }
-      const avgWkday = sim.reduce((a, p) => a + p.weekdayDutyCount, 0) / sim.length;
-      const avgWkend = sim.reduce((a, p) => a + p.weekendDutyCount, 0) / sim.length;
-      const varWkday = sim.reduce((a, p) => a + (p.weekdayDutyCount - avgWkday) ** 2, 0);
-      const varWkend = sim.reduce((a, p) => a + (p.weekendDutyCount - avgWkend) ** 2, 0);
-      const WEIGHTS = { totalVar: 1.0, weeklyVar: 4.0, dutyBalance: 0.2 };
-      const objective = WEIGHTS.totalVar * varTotal + WEIGHTS.weeklyVar * weeklyVar + WEIGHTS.dutyBalance * (varWkday + varWkend);
+      const objective = varTotal;
       return { valid: true, objective, peopleSim: sim, warnings: warningsSim };
     }
   }
