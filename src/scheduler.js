@@ -175,7 +175,7 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
     employees: people.map((p) => ({ id: p.id, name: p.name, preference: p.preference })),
     endDate: endDate ? fmtDate(addDays(start, totalDays - 1)) : null,
     schedule,
-    config: { weekdaySlots: Math.max(1, Math.min(2, weekdaySlots)), weekendSlots: Math.max(1, weekendSlots) },
+    config: { weekMode, weekdaySlots: Math.max(1, Math.min(2, weekdaySlots)), weekendSlots: Math.max(1, weekendSlots) },
     warnings,
     stats: people.map((p, i) => ({
       id: p.id,
