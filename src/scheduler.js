@@ -93,7 +93,7 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
   const map = schedule.map((d) => d.duties.map((x) => x.id));
   let regularsAlreadyApplied = false;
   if (optimization && optimization !== 'off') {
-    const attempts = optimization === 'strong' ? 8 : (optimization === 'medium' ? 3 : 1);
+    const attempts = optimization === 'strong' ? 16 : (optimization === 'medium' ? 4 : 1);
     let bestOpt = null;
     for (let t = 0; t < attempts; t += 1) {
       const res = optimizeBySA({ map, days, people, weekKeys, start, totalDays, holidaySet, level: optimization });
@@ -297,9 +297,9 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
 
     // 파라미터 (레벨별 시도 횟수와 냉각률)
     const params = {
-      fast: { iters: Math.max(3000, days.length * 30), startT: 1.5, cool: 0.998 },
-      medium: { iters: Math.max(10000, days.length * 60), startT: 2.0, cool: 0.9985 },
-      strong: { iters: Math.max(25000, days.length * 120), startT: 3.0, cool: 0.999 },
+      fast: { iters: Math.max(5000, days.length * 40), startT: 1.5, cool: 0.998 },
+      medium: { iters: Math.max(20000, days.length * 80), startT: 2.0, cool: 0.9987 },
+      strong: { iters: Math.max(50000, days.length * 160), startT: 3.0, cool: 0.999 },
     }[level] || { iters: 0 };
     if (!params.iters) return { accepted: false };
 
