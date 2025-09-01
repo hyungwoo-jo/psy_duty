@@ -88,7 +88,7 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
     }
   }
 
-  // 선택적 최적화 (총근무시간 편차 완화)
+  // 선택적 최적화 (총근무시간/주별 편차 완화)
   const map = schedule.map((d) => d.duties.map((x) => x.id));
   if (optimization && optimization !== 'off') {
     const optimized = optimizeBySA({
@@ -129,8 +129,11 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
       .filter((p) => !(p.vacationWeeks && p.vacationWeeks.has(wk)))
       .filter((p) => !(p.offDayKeys && p.offDayKeys.has(key)))
       .filter((p) => !(p.unavailable && p.unavailable.has(key)));
-    // 스코어: 현재 주 누적 근무시간이 적은 순, 당직 최근성
-    const scored = pool.map((p) => ({ p, score: [p.weeklyHours[wk] || 0, p.dutyCount, -(i - p.lastDutyIndex)] }))
+    // 스코어: 주 누적 → 총 누적 → 당직횟수 → 최근성
+    const scored = pool.map((p) => {
+        const totalHours = Object.values(p.weeklyHours).reduce((a, b) => a + b, 0);
+        return { p, score: [p.weeklyHours[wk] || 0, totalHours, p.dutyCount, -(i - p.lastDutyIndex)] };
+      })
       .sort((a, b) => {
         for (let k = 0; k < a.score.length; k += 1) { if (a.score[k] !== b.score[k]) return a.score[k] - b.score[k]; }
         return 0;
@@ -387,7 +390,7 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
     return { accepted: false };
 
     function evaluateMap(assignMap) {
-      // 사람 상태 초기화 (베이스라인 정규근무만 반영)
+      // 사람 상태 초기화 (베이스라인 0; 정규는 후처리)
       const sim = people.map((p) => ({
         id: p.id,
         name: p.name,
@@ -396,7 +399,7 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
         vacationWeeks: p.vacationWeeks,
         totalCapHours: p.totalCapHours,
         weeklyHours: Object.fromEntries(
-          weekKeys.map((wk) => [wk, baselineRegularForWeek(wk, start, totalDays, holidaySet, weekMode, p.vacationWeeks.has(wk))])
+          weekKeys.map((wk) => [wk, 0])
         ),
         dutyCount: 0,
         weekdayDutyCount: 0,
@@ -439,6 +442,27 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
           p.offDayKeys.add(nKey);
         }
       }
+      // 평일 정규 2명 반영
+      for (let d = 0; d < days.length; d += 1) {
+        const date = days[d];
+        if (!isWorkday(date, holidaySet)) continue;
+        const wk = weekKeyByMode(date, start, weekMode);
+        const key = fmtDate(date);
+        const pool = sim
+          .filter((p) => !(p.vacationWeeks && p.vacationWeeks.has(wk)))
+          .filter((p) => !(p.offDayKeys && p.offDayKeys.has(key)))
+          .filter((p) => !(p.unavailable && p.unavailable.has(key)));
+        const scored = pool.map((p) => {
+          const totalHours = Object.values(p.weeklyHours).reduce((a, b) => a + b, 0);
+          return { p, score: [p.weeklyHours[wk] || 0, totalHours, p.dutyCount, -(d - p.lastDutyIndex)] };
+        }).sort((a, b) => {
+          for (let i = 0; i < a.score.length; i += 1) { if (a.score[i] !== b.score[i]) return a.score[i] - b.score[i]; }
+          return 0;
+        }).map((x) => x.p);
+        const pick = scored.slice(0, 2);
+        for (const p of pick) { p.weeklyHours[wk] = (p.weeklyHours[wk] || 0) + 11; }
+      }
+
       // 주간 경고 집계 및 목적함수 계산
       for (const p of sim) collectWeeklyWarnings(p, warningsSim, WEEK_MAX);
       // 총합 상한 검사 (개인별 cap)
@@ -449,13 +473,20 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
       }
       const totals = sim.map((p) => Object.values(p.weeklyHours).reduce((a, b) => a + b, 0));
       const avg = totals.reduce((a, b) => a + b, 0) / sim.length;
-      // 공정성: 총근무시간 분산 + 평일/주말 당직 편차 가중
+      // 공정성: 총근무시간 분산 + 주별 분산(사람 간) + 평일/주말 당직 균형(낮은 가중)
       const varTotal = totals.reduce((acc, t) => acc + (t - avg) * (t - avg), 0);
+      let weeklyVar = 0;
+      for (const wk of weekKeys) {
+        const vals = sim.map((p) => p.weeklyHours[wk] || 0);
+        const m = vals.reduce((a, b) => a + b, 0) / vals.length;
+        weeklyVar += vals.reduce((acc, v) => acc + (v - m) * (v - m), 0);
+      }
       const avgWkday = sim.reduce((a, p) => a + p.weekdayDutyCount, 0) / sim.length;
       const avgWkend = sim.reduce((a, p) => a + p.weekendDutyCount, 0) / sim.length;
       const varWkday = sim.reduce((a, p) => a + (p.weekdayDutyCount - avgWkday) ** 2, 0);
       const varWkend = sim.reduce((a, p) => a + (p.weekendDutyCount - avgWkend) ** 2, 0);
-      const objective = varTotal + 5 * (varWkday + varWkend);
+      const WEIGHTS = { totalVar: 1.0, weeklyVar: 4.0, dutyBalance: 0.2 };
+      const objective = WEIGHTS.totalVar * varTotal + WEIGHTS.weeklyVar * weeklyVar + WEIGHTS.dutyBalance * (varWkday + varWkend);
       return { valid: true, objective, peopleSim: sim, warnings: warningsSim };
     }
   }
