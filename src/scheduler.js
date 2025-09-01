@@ -129,9 +129,7 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
     const pool = people
       .filter((p) => !(p.vacationWeeks && p.vacationWeeks.has(wk)))
       .filter((p) => !(p.offDayKeys && p.offDayKeys.has(key)))
-      .filter((p) => !(p.unavailable && p.unavailable.has(key)))
-      // 주당 72h 상한: 정규 11h 추가 시 초과하는 인원은 제외
-      .filter((p) => ((p.weeklyHours[wk] || 0) + 11) <= WEEK_MAX + 1e-9);
+      .filter((p) => !(p.unavailable && p.unavailable.has(key)));
     // 스코어: 주 누적 → 총 누적 → 당직횟수 → 최근성
     const scored = pool.map((p) => {
         const totalHours = Object.values(p.weeklyHours).reduce((a, b) => a + b, 0);
@@ -146,6 +144,13 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
     // 반영: 각 +11h
     for (const p of pick) { p.weeklyHours[wk] = (p.weeklyHours[wk] || 0) + 11; }
     cell.regulars = pick.map((p) => ({ id: p.id, name: p.name }));
+    // 평일 24h인 경우(정규+당직) 다음날 오프 표시
+    const dutyIds = new Set(cell.duties.map((d) => d.id));
+    const next = addDays(d, 1);
+    const nKey = fmtDate(next);
+    for (const p of pick) {
+      if (dutyIds.has(p.id)) p.offDayKeys.add(nKey);
+    }
   }
 
   // 정규 반영 이후 경고/총합 재계산
@@ -283,11 +288,12 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
     if (isTodayWorkday) person.weekdayDutyCount += 1; else person.weekendDutyCount += 1;
     person.lastDutyIndex = index;
 
-    // 다음날 오프(평일이면 해당 주간 8h 감산), 당일+다음날 당직 금지 관리용 offDay 표시
-    const next = addDays(date, 1);
-    const nKey = fmtDate(next);
-    person.offDayKeys.add(nKey);
-    // 다음날은 오프로 당직 불가만 표시 (정규 시간은 별도 반영)
+    // 다음날 오프: 주말/공휴일 당직(24h)만 즉시 오프
+    if (!isTodayWorkday) {
+      const next = addDays(date, 1);
+      const nKey = fmtDate(next);
+      person.offDayKeys.add(nKey);
+    }
   }
 
   function normalizePref(pref) {
@@ -439,10 +445,12 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
           if (isTodayWorkday) p.weekdayDutyCount += 1; else p.weekendDutyCount += 1;
           p._dutyHoursAccum += addDuty;
           p.lastDutyIndex = d;
-          // 다음날 오프만 표시 (정규는 후처리)
-          const next = addDays(date, 1);
-          const nKey = fmtDate(next);
-          p.offDayKeys.add(nKey);
+          // 다음날 오프: 주말/공휴일 당직(24h)만 즉시 오프
+          if (!isTodayWorkday) {
+            const next = addDays(date, 1);
+            const nKey = fmtDate(next);
+            p.offDayKeys.add(nKey);
+          }
         }
       }
       // 평일 정규 2명 반영
@@ -464,16 +472,16 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
         }).map((x) => x.p);
         const pick = scored.slice(0, 2);
         for (const p of pick) { p.weeklyHours[wk] = (p.weeklyHours[wk] || 0) + 11; }
+        // 평일 24h인 경우(정규+당직) 다음날 오프
+        const dutyIds = new Set(assignMap[d] || []);
+        const next = addDays(date, 1);
+        const nKey = fmtDate(next);
+        for (const p of pick) { if (dutyIds.has(p.id)) p.offDayKeys.add(nKey); }
       }
 
       // 주간 경고 집계 및 목적함수 계산
       for (const p of sim) collectWeeklyWarnings(p, warningsSim, WEEK_MAX);
-      // 정규 반영 이후 주간 상한 위반은 불가로 처리
-      for (const p of sim) {
-        for (const wk of weekKeys) {
-          if ((p.weeklyHours[wk] || 0) > WEEK_MAX + 1e-9) return { valid: false };
-        }
-      }
+      // (주간 상한은 경고 수준으로 유지)
       // 총합 상한 검사 (개인별 cap)
       for (const p of sim) {
         const total = Object.values(p.weeklyHours).reduce((a, b) => a + b, 0);
