@@ -95,10 +95,11 @@ function onGenerate() {
     const holidays = [...parseHolidays(holidaysInput.value)];
     const unavailable = parseUnavailable(unavailableInput.value);
     const optimization = (optLevelSelect?.value || 'strong');
+    const budgetMs = getTimeBudgetMsFromQuery();
     const weekMode = (weekModeSelect?.value || 'calendar');
     const weekdaySlots = Math.max(1, Math.min(2, Number(weekdaySlotsSelect?.value || 1)));
     const vacations = parseVacations(vacationsInput.value, (d) => weekKeyByMode(new Date(d), new Date(startDate), weekMode));
-    const result = generateSchedule({ startDate, endDate, weeks, weekMode, employees, holidays, unavailableByName: Object.fromEntries(unavailable), vacationWeeksByName: Object.fromEntries(vacations), optimization, weekdaySlots });
+    const result = generateSchedule({ startDate, endDate, weeks, weekMode, employees, holidays, unavailableByName: Object.fromEntries(unavailable), vacationWeeksByName: Object.fromEntries(vacations), optimization, weekdaySlots, timeBudgetMs: budgetMs });
     lastResult = result;
     renderSummary(result);
     renderReport(result);
@@ -151,7 +152,7 @@ function renderSummary(result) {
   const wkModeLabel = (result?.config?.weekMode === 'start') ? '시작일 기준 7일' : '달력 기준(월–일)';
   summary.innerHTML = `
     <div class="legend">시간 산식: 평일 정규 11h(2명), 평일 당직 ${wkdaySlots}명(각 +13h, 정규와 병행 시 24h), 주말/공휴일 당직 ${wkendSlots}명(각 24h). 당직 다음날 24h 오프. 주당 상한: 72h, 개인 총합 ≤ 72×(근무주수)</div>
-    <div class="${warn ? 'warn' : 'ok'}">주 계산: ${wkModeLabel} / ${lines.join(' / ')}</div>
+    <div class="${warn ? 'warn' : 'ok'}">주 계산: ${wkModeLabel} / ${lines.join(' / ')}${result?.meta?.elapsedMs ? ` / 최적화 ${result.meta.elapsedMs}ms` : ''}</div>
   `;
 }
 
@@ -330,6 +331,15 @@ function groupBy(arr, keyFn) {
     map.get(k).push(item);
   }
   return map;
+}
+
+function getTimeBudgetMsFromQuery() {
+  try {
+    const qs = new URLSearchParams(window.location.search);
+    const v = Number(qs.get('budget'));
+    if (Number.isFinite(v) && v > 200 && v < 30000) return Math.floor(v);
+  } catch {}
+  return 2000; // default 2s
 }
 
 function signed(n) {

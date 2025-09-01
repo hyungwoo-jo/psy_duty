@@ -10,7 +10,7 @@ import { addDays, isWorkday, weekKey, fmtDate, rangeDays, weekKeyByMode, allWeek
 
 // preference: 'any' | 'weekday' | 'weekend'
 // optimization: 'off' | 'fast' | 'medium' | 'strong'
-export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMode = 'calendar', employees, holidays = [], unavailableByName = {}, vacationWeeksByName = {}, optimization = 'medium', weekdaySlots = 1, weekendSlots = 2 }) {
+export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMode = 'calendar', employees, holidays = [], unavailableByName = {}, vacationWeeksByName = {}, optimization = 'medium', weekdaySlots = 1, weekendSlots = 2, timeBudgetMs = 2000 }) {
   if (!employees || employees.length < 2) {
     throw new Error('근무자는 2명 이상 필요합니다.');
   }
@@ -70,6 +70,7 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
 
   // 메인 할당 루프
   const warnings = [];
+  const meta = { elapsedMs: 0 };
   for (let i = 0; i < schedule.length; i += 1) {
     const cell = schedule[i];
     const slots = isWorkday(cell.date, holidaySet) ? Math.max(1, Math.min(2, weekdaySlots)) : Math.max(1, weekendSlots);
@@ -93,10 +94,16 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
   const map = schedule.map((d) => d.duties.map((x) => x.id));
   let regularsAlreadyApplied = false;
   if (optimization && optimization !== 'off') {
-    const attempts = optimization === 'strong' ? 16 : (optimization === 'medium' ? 4 : 1);
+    // 시간 예산 내에서 다중 재시도: strong은 더 많은 재시작/이터레이션
+    const startTs = Date.now();
+    const timeBudget = Math.max(500, Math.min(20000, Number(timeBudgetMs) || 2000));
+    const baseAttempts = optimization === 'strong' ? 16 : (optimization === 'medium' ? 4 : 1);
+    let tries = 0;
     let bestOpt = null;
-    for (let t = 0; t < attempts; t += 1) {
-      const res = optimizeBySA({ map, days, people, weekKeys, start, totalDays, holidaySet, level: optimization });
+    while (tries < baseAttempts && (Date.now() - startTs) < timeBudget) {
+      const remainingMs = timeBudget - (Date.now() - startTs);
+      const res = optimizeBySA({ map, days, people, weekKeys, start, totalDays, holidaySet, level: optimization, timeBudgetMs: remainingMs });
+      tries += 1;
       if (res && res.accepted) {
         if (!bestOpt || res.objective < bestOpt.objective) bestOpt = res;
       }
@@ -111,6 +118,7 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
       applyPeopleState(people, bestOpt.peopleSim);
       warnings.push(...bestOpt.warningsAfter);
       regularsAlreadyApplied = true; // 평가 단계에서 정규(+11h×2) 이미 반영됨
+      meta.elapsedMs = Date.now() - startTs;
     } else {
       for (const p of people) { collectWeeklyWarnings(p, warnings, WEEK_MAX); collectTotalWarning(p, warnings, p.totalCapHours); }
     }
@@ -286,7 +294,7 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
   }
 
   // 로컬 스왑 최적화
-  function optimizeBySA({ map, days, people, weekKeys, start, totalDays, holidaySet, level }) {
+  function optimizeBySA({ map, days, people, weekKeys, start, totalDays, holidaySet, level, timeBudgetMs = 2000 }) {
     // 초기 평가
     let current = map.map((arr) => arr.slice());
     let best = evaluateMap(current);
@@ -299,12 +307,16 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
     const params = {
       fast: { iters: Math.max(5000, days.length * 40), startT: 1.5, cool: 0.998 },
       medium: { iters: Math.max(20000, days.length * 80), startT: 2.0, cool: 0.9987 },
-      strong: { iters: Math.max(50000, days.length * 160), startT: 3.0, cool: 0.999 },
+      // strong 반복수를 낮춰 속도 다이어트(재시작은 16회 유지)
+      strong: { iters: Math.max(25000, days.length * 100), startT: 3.0, cool: 0.999 },
     }[level] || { iters: 0 };
     if (!params.iters) return { accepted: false };
 
     let T = params.startT;
+    const endTs = Date.now() + Math.max(200, Math.min(20000, Number(timeBudgetMs) || 2000));
+    let noImprove = 0;
     for (let step = 0; step < params.iters; step += 1) {
+      if (Date.now() > endTs) break; // 시간 예산 초과 시 중단
       const proposal = current.map((arr) => arr.slice());
       // 무브 선택: 1-move 60%, 2-swap 40%
       if (Math.random() < 0.6) {
@@ -354,10 +366,13 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
             best = evalRes;
             bestMap = proposal.map((a) => a.slice());
             bestEval = evalRes;
+            noImprove = 0;
           }
         }
       }
       T *= params.cool;
+      // 개선 정체 시 조기 종료
+      if (noImprove > Math.max(1000, Math.floor(params.iters * 0.1))) break;
     }
 
     if (best.objective < Number.POSITIVE_INFINITY) {
