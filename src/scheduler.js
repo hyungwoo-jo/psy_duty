@@ -307,8 +307,8 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
     const params = {
       fast: { iters: Math.max(5000, days.length * 40), startT: 1.5, cool: 0.998 },
       medium: { iters: Math.max(20000, days.length * 80), startT: 2.0, cool: 0.9987 },
-      // strong 반복수를 낮춰 속도 다이어트(재시작은 16회 유지)
-      strong: { iters: Math.max(25000, days.length * 100), startT: 3.0, cool: 0.999 },
+      // Option B: strong 이터레이션 상향 (재시작 16회 유지)
+      strong: { iters: Math.max(30000, days.length * 120), startT: 3.0, cool: 0.999 },
     }[level] || { iters: 0 };
     if (!params.iters) return { accepted: false };
 

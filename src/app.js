@@ -15,7 +15,7 @@ const calendar = document.querySelector('#calendar');
 const holidaysInput = document.querySelector('#holidays');
 const unavailableInput = document.querySelector('#unavailable');
 const vacationsInput = document.querySelector('#vacations');
-const optLevelSelect = document.querySelector('#opt-level');
+// 최적화 선택 UI 제거: 기본 strong
 const weekModeSelect = document.querySelector('#week-mode');
 const weekdaySlotsSelect = document.querySelector('#weekday-slots');
 
@@ -94,7 +94,7 @@ function onGenerate() {
 
     const holidays = [...parseHolidays(holidaysInput.value)];
     const unavailable = parseUnavailable(unavailableInput.value);
-    const optimization = (optLevelSelect?.value || 'strong');
+    const optimization = 'strong';
     const budgetMs = getTimeBudgetMsFromQuery();
     const weekMode = (weekModeSelect?.value || 'calendar');
     const weekdaySlots = Math.max(1, Math.min(2, Number(weekdaySlotsSelect?.value || 1)));
@@ -339,7 +339,7 @@ function getTimeBudgetMsFromQuery() {
     const v = Number(qs.get('budget'));
     if (Number.isFinite(v) && v > 200 && v < 30000) return Math.floor(v);
   } catch {}
-  return 2000; // default 2s
+  return 3000; // default 3s (Option B)
 }
 
 function signed(n) {
