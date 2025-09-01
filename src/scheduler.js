@@ -124,9 +124,8 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
     if (!isWorkday(d, holidaySet)) { cell.regulars = []; continue; }
     const wk = weekKeyByMode(d, start, weekMode);
     const key = fmtDate(d);
-    // 후보: 해당일 당직자 제외, 전일 당직 오프 제외, 휴가 주 제외, 불가일 제외
-    const dutyIds = new Set(cell.duties.map((d) => d.id));
-    const pool = people.filter((p) => !dutyIds.has(p.id))
+    // 후보: 전일 당직 오프 제외, 휴가 주 제외, 불가일 제외 (해당일 당직자는 포함: 당직자도 정규 가능)
+    const pool = people
       .filter((p) => !(p.vacationWeeks && p.vacationWeeks.has(wk)))
       .filter((p) => !(p.offDayKeys && p.offDayKeys.has(key)))
       .filter((p) => !(p.unavailable && p.unavailable.has(key)));
