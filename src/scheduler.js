@@ -189,6 +189,12 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
     const isTodayWorkday = isWorkday(date, holidaySet);
 
     const takenIds = new Set(schedule[index].duties.map((d) => d.id));
+    const isTodayWeekendLike = !isWorkday(date, holidaySet);
+    // 전날 야간당직(18~07) 직후 바로 주말/공휴일 24h 당직 금지 (연속 >24h 방지)
+    const prevNightDutyIds = new Set();
+    if (isTodayWeekendLike && index > 0) {
+      for (const d of schedule[index - 1].duties) prevNightDutyIds.add(d.id);
+    }
 
     // 단계별 필터로 사유 수집
     const stage = { offday: [], preference: [], unavailable: [], vacation: [], overWeek_today: [], overWeek_next: [], overTotal: [] };
@@ -197,6 +203,13 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
     const afterOff = [];
     for (const p of pool) (p.offDayKeys.has(todayKey) ? stage.offday : afterOff).push(p);
     pool = afterOff;
+
+    // 주말/휴일: 전날 야간당직자 제외
+    if (isTodayWeekendLike && prevNightDutyIds.size) {
+      const afterPrev = [];
+      for (const p of pool) (prevNightDutyIds.has(p.id) ? stage.offday : afterPrev).push(p);
+      pool = afterPrev;
+    }
 
     const afterPref = [];
     for (const p of pool) (allowByPreference(p.preference, isTodayWorkday) ? afterPref : stage.preference).push(p);
@@ -418,6 +431,11 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
           if (p.unavailable && p.unavailable.has(todayKey)) return { valid: false };
           if (p.vacationWeeks && p.vacationWeeks.has(wk)) return { valid: false };
           if (!allowByPreference(p.preference, isTodayWorkday)) return { valid: false };
+          // 주말/공휴일 24h는 전날 야간당직 직후 배정 금지 (연속 >24h 방지)
+          if (!isTodayWorkday && d > 0) {
+            const prevIds = new Set(assignMap[d - 1] || []);
+            if (prevIds.has(id)) return { valid: false };
+          }
           const addDuty = isTodayWorkday ? 13 : 24;
           const simToday = (p.weeklyHours[wk] ?? 0) + addDuty;
           if (simToday > WEEK_MAX + 1e-9) return { valid: false };
