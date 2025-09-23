@@ -32,10 +32,10 @@ jobs:
         run: |
           set -euo pipefail
           # Pick the first .zip asset
-          ASSET_ID=$(gh api repos/${{ github.repository }}/releases/$RELEASE_ID/assets --jq 
-            'map(select(.name | test("\\.zip$"))) | .[0].id // empty')
-          ASSET_NAME=$(gh api repos/${{ github.repository }}/releases/$RELEASE_ID/assets --jq 
-            'map(select(.name | test("\\.zip$"))) | .[0].name // empty')
+          ASSET_ID=$(gh api -q 'map(select(.name|test("\\.zip$"))) | .[0].id // empty' \
+            repos/${{ github.repository }}/releases/$RELEASE_ID/assets)
+          ASSET_NAME=$(gh api -q 'map(select(.name|test("\\.zip$"))) | .[0].name // empty' \
+            repos/${{ github.repository }}/releases/$RELEASE_ID/assets)
           if [[ -z "$ASSET_ID" ]]; then
             echo "No .zip asset found on this release. Upload ICS ZIP and republish." >&2
             exit 3
@@ -77,10 +77,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          XLS_ID=$(gh api repos/${{ github.repository }}/releases/$RELEASE_ID/assets --jq \
-            'map(select(.name | test("\\.(xls|xlsx)$"))) | .[0].id // empty')
-          XLS_NAME=$(gh api repos/${{ github.repository }}/releases/$RELEASE_ID/assets --jq \
-            'map(select(.name | test("\\.(xls|xlsx)$"))) | .[0].name // empty')
+          XLS_ID=$(gh api -q 'map(select(.name|test("\\.(xls|xlsx)$"))) | .[0].id // empty' \
+            repos/${{ github.repository }}/releases/$RELEASE_ID/assets)
+          XLS_NAME=$(gh api -q 'map(select(.name|test("\\.(xls|xlsx)$"))) | .[0].name // empty' \
+            repos/${{ github.repository }}/releases/$RELEASE_ID/assets)
           echo "asset_id=${XLS_ID}" >> $GITHUB_OUTPUT
           echo "asset_name=${XLS_NAME}" >> $GITHUB_OUTPUT
 
