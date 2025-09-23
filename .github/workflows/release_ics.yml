@@ -8,6 +8,12 @@ on:
       tag:
         description: "Release tag (e.g., ics-2025-10-v3)"
         required: false
+      zip_url:
+        description: "Direct URL to ICS ZIP (fallback if no asset)"
+        required: false
+      xls_url:
+        description: "Direct URL to Excel (optional)"
+        required: false
 
 permissions:
   contents: write
@@ -32,6 +38,7 @@ jobs:
         id: dlzip
         env:
           REL_TAG: ${{ inputs.tag != '' && inputs.tag || github.event.release.tag_name }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           ZIPFILE=""
@@ -140,5 +147,5 @@ jobs:
           git config user.name "github-actions"
           git config user.email "github-actions@users.noreply.github.com"
           git add -A ics
-          git commit -m "ci(release): publish ${{ steps.parse.outputs.month }} ${{ steps.parse.outputs.version }} from release asset ${{ steps.asset.outputs.asset_name }}" || true
-          git push origin HEAD:${{ github.ref_name == 'refs/heads/main' && 'main' || 'main' }}
+          git commit -m "ci(release): publish ${{ steps.derive.outputs.month }} ${{ steps.derive.outputs.version }}" || true
+          git push origin HEAD:main
