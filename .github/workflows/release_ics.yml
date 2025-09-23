@@ -109,7 +109,8 @@ jobs:
           OUT_DIR="ics/${{ steps.derive.outputs.month }}/${{ steps.derive.outputs.version }}"
           test -d "$OUT_DIR" && { echo "Target exists: $OUT_DIR" >&2; exit 4; } || true
           mkdir -p "$OUT_DIR"
-          unzip -o "${{ steps.dlzip.outputs.zip }}" -d "$OUT_DIR"
+          # Force UTF-8 for filenames to keep 한글 파일명 정상 복원
+          unzip -O UTF-8 -o "${{ steps.dlzip.outputs.zip }}" -d "$OUT_DIR"
           XLS_LOCAL="${{ steps.xls.outputs.name }}"
           if [ -z "$XLS_LOCAL" ] && [ -f roster.xls ]; then XLS_LOCAL=roster.xls; fi
           if [ -n "$XLS_LOCAL" ] && [ -f "$XLS_LOCAL" ]; then
