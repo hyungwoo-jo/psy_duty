@@ -3,13 +3,12 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>당직표 생성기 (초안)</title>
+    <title>PSY 당직표</title>
     <link rel="stylesheet" href="assets/styles.css" />
   </head>
   <body>
     <header>
-      <h1>당직표 생성기 (초안)</h1>
-      <p>규칙(개정): 평일 정규근무 8h(2명). 평일 당직 시 당일 총 21.5h(정규 8 + 당직 13.5, 휴게 2.5). 주말/공휴일 당직 21h. 평일 당직자의 다음날은 정규 면제. 공휴일 지정 유지. 주당 72h 초과 경고.</p>
+      <h1>PSY 당직표</h1>
     </header>
 
     <section class="controls">
@@ -28,7 +27,7 @@
       
       <!-- 당직 인원 고정: 병당 1, 응당 1 (UI 옵션 제거) -->
       <div class="field field--full">
-        <label for="employees">근무자 목록 (형식: R연차 이름[, 소아][, 응급])</label>
+        <label for="employees">근무자 목록</label>
         <textarea id="employees" rows="12" placeholder="형식 예시:
 R1 장주만
 R1 조형우
@@ -63,7 +62,7 @@ R4 이동인"></textarea>
         });
       </script>
       <div class="field field--full">
-        <label for="holidays">공휴일 지정 (YYYY-MM-DD, 한 줄에 한 개)</label>
+        <label for="holidays">공휴일 지정</label>
         <div style="display:flex; gap:8px; align-items:flex-start; flex-wrap: wrap;">
           <textarea id="holidays" rows="4" placeholder="예시:\n2025-01-01\n-2025-02-28 (빼기)"></textarea>
           <div style="display:flex; flex-direction: column; gap:6px;">
@@ -73,7 +72,7 @@ R4 이동인"></textarea>
         </div>
       </div>
       <div class="field field--full">
-        <label for="unavailable">개인별 불가일 (이름: 날짜, 날짜...)</label>
+        <label for="unavailable">개인별 불가일</label>
         <textarea id="unavailable" rows="5" placeholder="예시:
 장주만: 2025-01-07, 2025-01-15
 조형우: 2025-01-10 | 2025-01-11
@@ -81,7 +80,7 @@ R4 이동인"></textarea>
 "></textarea>
       </div>
       <div class="field field--full">
-        <label for="vacations">휴가 (이름: 시작일~종료일[, 시작일~종료일...]) — 기간 내 정규/당직 제외</label>
+        <label for="vacations">휴가</label>
         <textarea id="vacations" rows="4" placeholder="예시:
 장주만: 2025-01-06~2025-01-12
 조형우: 2025-01-20~2025-01-22, 2025-02-03~2025-02-04"></textarea>

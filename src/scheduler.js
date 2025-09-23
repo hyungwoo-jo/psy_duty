@@ -27,6 +27,7 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
     totalDays = Math.floor((e - s) / (1000 * 60 * 60 * 24)) + 1;
   }
   const days = rangeDays(start, totalDays);
+  const dayKeys = days.map((d) => fmtDate(d));
   const holidaySet = new Set(holidays);
   // 주당 상한: 72h는 소프트(권장) 상한, 75h를 하드 상한으로 드물게만 허용
   const WEEK_SOFT_MAX = 72;
@@ -467,7 +468,7 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
         klass: p.klass,
         pediatric: p.pediatric,
         unavailable: p.unavailable,
-        vacationWeeks: p.vacationWeeks,
+        vacationDays: p.vacationDays,
         totalCapHours: p.totalCapHours,
         weeklyHours: Object.fromEntries(
           weekKeys.map((wk) => [wk, 0])
@@ -573,6 +574,7 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
       let hoursVarInClass = 0;   // 연차 내 총 시간 분산
       let weeklyClassVar = 0;    // 연차 내 주별 duty 횟수 분산
       let countClassVar = 0;     // 연차 내 총 당직 횟수 분산 (최우선)
+      let vacFavorPen = 0;       // 휴가자 과도 배치 억제 페널티
       for (const [klass, arr] of byClass) {
         if (!klass) continue;
         const bys = arr.map((p) => p._byung || 0);
@@ -592,6 +594,14 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
           const arrW = arr.map((p) => p._wkDuty[wk] || 0);
           const mw = arrW.reduce((a,b)=>a+b,0) / (arrW.length || 1);
           weeklyClassVar += arrW.reduce((acc,v)=>acc+(v-mw)*(v-mw),0);
+        }
+        // 휴가자 배려: 휴가일 수 비례로 0~2개까지 적게 서도 무페널티, 넘기면 페널티
+        for (const p of arr) {
+          const set = p.vacationDays || new Set();
+          let vacCount = 0; for (const k of dayKeys) { if (set.has(k)) vacCount++; }
+          const vacAdj = Math.min(2, Math.floor(vacCount / 5)); // 5일 휴가당 1개 감면, 최대 2개
+          const allow = Math.max(0, mc - vacAdj);
+          if ((p.dutyCount || 0) > allow) vacFavorPen += ((p.dutyCount || 0) - allow);
         }
       }
       // 공평성 기준: 연차 내에서만 균형 유지 (최우선: 총 당직 횟수 균형)
@@ -615,7 +625,7 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
           }
         }
       }
-      const WEIGHTS = { total: 0.0, smooth: 0.0, countClass: 9.0, roleClass: 3.0, hoursClass: 0.2, weeklyClass: 0.5, softCnt: 2.0, softAmt: 0.5, preferMiss: 1.5 };
+      const WEIGHTS = { total: 0.0, smooth: 0.0, countClass: 9.0, roleClass: 3.0, hoursClass: 0.1, weeklyClass: 0.4, softCnt: 2.0, softAmt: 0.5, preferMiss: 1.5, vacFavor: 4.0 };
       const objective = WEIGHTS.total * varTotal
         + WEIGHTS.smooth * smooth
         + WEIGHTS.countClass * countClassVar
@@ -624,7 +634,8 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
         + WEIGHTS.weeklyClass * weeklyClassVar
         + WEIGHTS.softCnt * softExceedCount
         + WEIGHTS.softAmt * softExceedAmount
-        + WEIGHTS.preferMiss * preferMiss;
+        + WEIGHTS.preferMiss * preferMiss
+        + WEIGHTS.vacFavor * vacFavorPen;
       return { valid: true, objective, peopleSim: sim, warnings: warningsSim };
     }
   }
