@@ -6,8 +6,6 @@ const weeksInput = document.querySelector('#weeks');
 const endInput = document.querySelector('#end-date');
 const employeesInput = document.querySelector('#employees');
 const generateBtn = document.querySelector('#generate');
-const exportJsonBtn = document.querySelector('#export-json');
-const exportCsvBtn = document.querySelector('#export-csv');
 const exportXlsxBtn = document.querySelector('#export-xlsx');
 const exportIcsBtn = document.querySelector('#export-ics');
 const messages = document.querySelector('#messages');
@@ -28,8 +26,6 @@ const loadingTextEl = loadingOverlay ? loadingOverlay.querySelector('.loading-te
 setDefaultStartMonday();
 
 generateBtn.addEventListener('click', onGenerate);
-exportJsonBtn.addEventListener('click', onExportJson);
-exportCsvBtn.addEventListener('click', onExportCsv);
 exportXlsxBtn?.addEventListener('click', onExportXlsx);
 exportIcsBtn?.addEventListener('click', onExportIcs);
 // 직원 목록 변경 시 보정 UI 갱신
@@ -146,8 +142,6 @@ function onGenerate() {
         const prev = getPreviousStatsFromUI();
         renderReport(best, { previous: prev });
         renderRoster(best);
-        exportJsonBtn.disabled = false;
-        exportCsvBtn.disabled = false;
         if (exportXlsxBtn) exportXlsxBtn.disabled = false;
         if (exportIcsBtn) exportIcsBtn.disabled = false;
 
@@ -169,8 +163,6 @@ function onGenerate() {
       } catch (err) {
         console.error(err);
         messages.textContent = err.message || String(err);
-        exportJsonBtn.disabled = true;
-        exportCsvBtn.disabled = true;
         if (exportXlsxBtn) exportXlsxBtn.disabled = true;
         if (exportIcsBtn) exportIcsBtn.disabled = true;
       } finally {
@@ -183,8 +175,6 @@ function onGenerate() {
     messages.textContent = err.message || String(err);
     setLoading(false);
     disableActions(false);
-    exportJsonBtn.disabled = true;
-    exportCsvBtn.disabled = true;
     if (exportXlsxBtn) exportXlsxBtn.disabled = true;
     if (exportIcsBtn) exportIcsBtn.disabled = true;
   }
@@ -304,21 +294,7 @@ function renderReport(result, opts = {}) {
   renderCarryoverStats(result, opts);
 }
 
-function onExportJson() {
-  if (!lastResult) return;
-  download('duty-roster.json', JSON.stringify(lastResult, null, 2));
-}
-
-function onExportCsv() {
-  if (!lastResult) return;
-  const rows = [['date', 'byungdang', 'eungdang', 'back']];
-  for (const d of lastResult.schedule) {
-    const names = d.duties.map((x) => x.name);
-    rows.push([d.key, names[0] || '', names[1] || '', d.back?.name || '']);
-  }
-  const csv = rows.map((r) => r.map(csvEscape).join(',')).join('\n');
-  download('duty-roster.csv', csv);
-}
+// onExportJson / onExportCsv 제거(미사용)
 
 function onExportXlsx() {
   if (!lastResult) return;
@@ -344,9 +320,18 @@ function onExportXlsx() {
   }
   const prev = getPreviousStatsFromUI();
   const carryRows = buildCarryoverRows(lastResult, prev);
+  // Build per-person ICS links sheet
+  const linksRows = [ [ { v: '이름', style: 'Header' }, { v: 'ICS', style: 'Header' } ] ];
+  for (const e of lastResult.employees) {
+    if (!hasDutiesFor(lastResult, e.name)) continue;
+    const ics = buildICS(lastResult, { nameFilter: e.name, includeBack: false });
+    const href = 'data:text/calendar;charset=utf-8;base64,' + base64Utf8(ics);
+    linksRows.push([ e.name, { v: '다운로드', href } ]);
+  }
   const xml = buildSpreadsheetXML([
     { name: 'Roster', rows: rosterRows },
     { name: 'StatToPass', rows: carryRows },
+    { name: 'ICS Links', rows: linksRows },
   ]);
   download('duty-roster.xls', xml);
 }
@@ -368,11 +353,7 @@ function onExportIcs() {
   download('duty-roster-ics.zip', zip);
 }
 
-function csvEscape(s) {
-  const v = String(s);
-  if (/[",\n]/.test(v)) return '"' + v.replaceAll('"', '""') + '"';
-  return v;
-}
+// csvEscape 제거(미사용)
 
 function download(filename, content) {
   const isXls = filename.toLowerCase().endsWith('.xls');
@@ -388,6 +369,18 @@ function download(filename, content) {
   a.download = filename;
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function base64Utf8(str) {
+  try {
+    return btoa(unescape(encodeURIComponent(str)));
+  } catch {
+    // Fallback using TextEncoder
+    const bytes = new TextEncoder().encode(str);
+    let s = '';
+    for (let i = 0; i < bytes.length; i += 1) s += String.fromCharCode(bytes[i]);
+    return btoa(s);
+  }
 }
 
 function sanitizeFilename(s) {
@@ -425,7 +418,8 @@ function sheetXML(name, rows) {
     const cells = r.map((cell) => {
       const obj = (cell && typeof cell === 'object' && 'v' in cell) ? cell : { v: cell };
       const sid = obj.style ? ` ss:StyleID=\"${xmlEscape(obj.style)}\"` : '';
-      return `<Cell${sid}><Data ss:Type=\"String\">${xmlEscape(obj.v ?? '')}</Data></Cell>`;
+      const href = obj.href ? ` ss:HRef=\"${xmlEscape(obj.href)}\"` : '';
+      return `<Cell${sid}${href}><Data ss:Type=\"String\">${xmlEscape(obj.v ?? '')}</Data></Cell>`;
     }).join('');
     return `<Row>${cells}</Row>`;
   }).join('');
@@ -477,7 +471,9 @@ function buildICS(result, opts = {}) {
       const role = roles[i] || `슬롯${i + 1}`;
       const title = `${role} - ${duty.name}`;
       const desc = `${key} ${dayNote}`;
-      pushEvent(dateObj, title, `duty-${key}-${i}-${duty.id}`, desc);
+      const roleKey = i === 0 ? 'B' : 'E';
+      const nameHash = (crc32(new TextEncoder().encode(duty.name)) >>> 0).toString(16);
+      pushEvent(dateObj, title, `duty-${key}-${roleKey}-${nameHash}`, desc);
     }
     // Emergency back (옵션) — 기본적으로 미포함
     if (includeBack && day.back) {
@@ -812,8 +808,6 @@ function disableActions(flag) {
   const disabled = !!flag;
   generateBtn.disabled = disabled;
   // Export buttons follow disabled flag; if not disabled, enable only when result exists
-  exportJsonBtn.disabled = disabled || !lastResult;
-  exportCsvBtn.disabled = disabled || !lastResult;
   if (exportXlsxBtn) exportXlsxBtn.disabled = disabled || !lastResult;
   if (exportIcsBtn) exportIcsBtn.disabled = disabled || !lastResult;
 }
