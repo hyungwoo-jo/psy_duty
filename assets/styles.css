@@ -63,6 +63,9 @@ button {
 }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 
+/* Make the holiday loader more visible with blue text */
+#load-kr-holidays { color: #3b82f6; font-weight: 700; }
+
 /* Accent buttons (e.g., 공휴일 불러오기) */
 .btn-accent {
   background: rgba(94,234,212,0.22);

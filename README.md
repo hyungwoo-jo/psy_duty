@@ -47,83 +47,28 @@
 - Release 태그: `ics-YYYY-MM-vN` (예: `ics-2025-10-v3`)
   - 태그가 맞으면 이를 우선 사용하고, 아니라면 ZIP 파일명으로 보정합니다.
 
-## ICS 내보내기 · 달력 추가 가이드
+## ICS 일정 내 캘린더에 추가하기
 
-### 개요
-- 앱에서 당직표 생성 후 ‘ICS 내보내기’를 누르면 `duty-roster-ics.zip`이 내려받아집니다.
-- 압축을 풀면 인원별 `이름.ics`가 들어 있습니다(각 파일은 해당 인원의 당직일만 all‑day 이벤트로 포함; 응급 back 제외).
-- 아래에서 사용하는 ‘가져오기/Import’는 보통 “기존 캘린더에 일정 합치기”를 의미합니다.
+### 안내
+- 모든 일정은 종일(all‑day) 이벤트입니다.
+- 자동 업데이트를 원하면 “링크(URL) 구독” 방식을, 한 번만 넣으면 되면 “파일 가져오기”를 사용하세요.
 
-### Google Calendar(웹)
-- 접속: https://calendar.google.com → 우상단 톱니바퀴 → 설정 → ‘가져오기/내보내기’ → ‘가져오기’
-- 파일 선택: `이름.ics` 선택 → 넣을 캘린더 선택 → ‘가져오기’
-- 동기화: 모바일 Google Calendar 앱과 자동 동기화됩니다.
+### 링크(URL)로 받은 경우(추천: 자동 업데이트)
+- Google 캘린더(웹): 설정 → 캘린더 추가 → URL로 추가 → 공유받은 주소 붙여넣기 → 캘린더 추가
+- iPhone/iPad: Google 캘린더(웹)에서 위처럼 URL로 추가 → iOS의 해당 구글 계정과 자동 동기화
+- Android: Google 캘린더(웹)에서 URL로 추가 → Android 앱과 자동 동기화
+- macOS(캘린더): 파일 → 새 캘린더 구독… → 공유받은 주소 붙여넣기 → 확인
+- Outlook 웹: 캘린더 추가 → 웹에서 구독 → 주소 붙여넣기
+- Outlook 데스크톱: 캘린더 추가 → 인터넷에서 → 주소 붙여넣기
 
-### macOS 캘린더(Apple Calendar)
-- Finder에서 `이름.ics` 더블클릭 → ‘캘린더에 추가’ 창에서 캘린더 선택 → 확인
-- 또는 캘린더 앱 열기 → 메뉴 ‘파일’ → ‘가져오기…’ → `이름.ics` 선택
+### 파일(.ics)로 받은 경우(수동 가져오기)
+- Google 캘린더(웹): 설정 → 가져오기/내보내기 → 가져오기 → `이름.ics` 선택 → 대상 캘린더 선택 → 가져오기
+- iPhone/iPad: 파일 앱/메일에서 `이름.ics` 열기 → 공유 시트 → 캘린더에 추가(또는 Google 웹에서 가져오기 권장)
+- Android: 기기/버전에 따라 파일 열기 후 ‘캘린더에 추가’ 가능(미지원 시 Google 웹에서 가져오기)
+- macOS(캘린더): `이름.ics` 더블클릭 또는 파일 → 가져오기… → 파일 선택
+- Outlook 데스크톱: 파일 → 열기 및 내보내기 → 가져오기/내보내기 → iCalendar(.ics) 가져오기
+- Outlook 웹: 캘린더 추가 → 파일에서 업로드 → `이름.ics` 업로드 → 대상 캘린더 선택
 
-### iPhone/iPad(iOS)
-- 가장 안정적인 방법: Google 캘린더 웹에서 가져오기(위 절차) → iOS의 해당 구글 계정과 동기화
-- 또는 iOS에서 `이름.ics` 파일을 ‘파일’ 앱/메일로 열기 → 공유 시트에서 ‘캘린더에 추가’(버전/앱에 따라 표시 달라질 수 있음)
-
-### Android(구글 캘린더 앱)
-- 권장: Google 캘린더 웹에서 `이름.ics`를 계정으로 가져오기(웹 → 앱 자동 동기화)
-- 일부 기기/버전은 파일 앱에서 `이름.ics`를 열어 ‘캘린더에 추가’가 가능합니다(미지원 기기는 웹을 사용하세요).
-
-### Outlook
-- Outlook 데스크톱(Windows/Mac): 파일 → 열기 및 내보내기 → 가져오기/내보내기 → ‘iCalendar(.ics) 가져오기’ → `이름.ics`
-- Outlook 웹: https://outlook.office.com/calendar → ‘캘린더 추가’ → ‘파일에서 업로드’ → `이름.ics` 업로드 → 대상 캘린더 선택
-
-### 주의/팁
-- ICS 이벤트는 종일(all‑day)로 추가됩니다(시간대 미설정). 필요 시 캘린더 앱에서 개별 수정 가능.
-- 개인별로 캘린더를 구분하고 싶으면, 먼저 비어있는 보조 캘린더를 만들어 그 캘린더로 가져오세요.
-- 중복 가져오기를 피하려면, 가져오기 전에 기존 동일 월의 이벤트를 확인/정리하세요.
-
-## 여러 사용자가 쉽게 추가하는 베스트 프랙티스
-
-상황에 따라 두 가지 접근을 권장합니다.
-
-- 월별 일괄 가져오기(간단): 지금 구현된 ‘ICS ZIP’으로 한 번에 내려받아 각자 `이름.ics`를 가져옵니다. 빠르고 쉬우나, 일정 변경 시 재가져오기가 필요합니다(구독 아님).
-- 사람별 URL 공유(추천): 각 사람의 .ics 파일을 페이지에 호스팅해 ‘URL로 캘린더 추가(구독)’를 안내합니다. 일정이 바뀌면 파일만 교체하면 모두 자동 반영됩니다.
-
-### 사람별 URL을 만드는 방법(정적 Pages 기준)
-1) 앱에서 ‘ICS 내보내기’를 눌러 ZIP을 받습니다(또는 고급: JSON 내보내기 사용 시 `duty-roster.json`).
-2) 아래 스크립트로 사람별 ICS 생성 및 배포 커밋
-   - ZIP 사용: `scripts/release_ics.sh --month 2025-01 --version v3 --ics-zip duty-roster-ics.zip --set-latest`
-   - 디렉토리 사용: `scripts/release_ics.sh --month 2025-01 --version v3 --ics-dir path/to/unzipped --set-latest`
-   - (고급) JSON 사용: `scripts/release_ics.sh --month 2025-01 --version v3 --json duty-roster.json --set-latest`
-3) `public/ics/2025-01` 경로를 리포지토리에 포함시키고 배포(`scripts/deploy.sh`)
-4) 사용자에게 URL 제공(버전 포함):
-   - 예시: `https://<OWNER>.github.io/psy_duty/ics/2025-01/v3/홍길동.ics`
-   - Google 캘린더의 ‘URL로 캘린더 추가’에 위 주소를 입력(https 또는 webcal로 시작 가능)
-5) 앱에서 ‘ICS 버전’을 v3 등으로 입력하고 Excel을 내보내면, ‘ICS Links’ 시트의 링크가 자동으로 `https://<OWNER>.github.io/psy_duty/ics/YYYY-MM/vN/이름.ics`로 구성됩니다(YYYY‑MM은 기간에서 가장 많이 포함된 달 기준).
-
-TIP: GitHub Pages에서 열람 중이면 앱이 기본 경로를 자동 제안합니다(예: `https://<OWNER>.github.io/psy_duty/ics/YYYY-MM/`).
-
-### 완전 자동 배포(GitHub Actions · 추천)
-브라우저만으로 끝내고 싶다면 GitHub Release 이벤트로 자동 배포하세요.
-
-- 요약: 새 Release를 만들고 ZIP(.ics 묶음)을 첨부하면, Actions가 자동으로 `public/ics/YYYY-MM/vN/`에 전개/커밋/푸시합니다. (같이 올린 Excel 파일도 같은 폴더에 포함됩니다.)
-- 규칙: Release 태그는 `ics-YYYY-MM-vN` 형식이어야 합니다(예: `ics-2025-10-v3`). Release 자산의 첫 번째 .zip을 사용합니다.
-- 절차:
-  1) 앱에서 ‘ICS 내보내기’로 ZIP 다운로드
-  2) GitHub → Releases → New release
-     - Tag: `ics-2025-10-v3` (예) — 또는 ZIP 파일명을 `duty-roster-2025-10-v3.zip`처럼 맞추면 자동 추출됩니다.
-     - Attach binaries: ZIP 업로드 (+ 선택: Excel 파일) → Publish
-  3) 자동 배포 후 공유:
-     - 버전 고정: `https://<OWNER>.github.io/psy_duty/ics/2025-10/v3/이름.ics`
-     - 월 인덱스: `https://<OWNER>.github.io/psy_duty/ics/2025-10/` (해당 vN으로 자동 리다이렉트)
-
-### 재생성/수정 시 덮어쓰기 방지 전략(중요)
-- 버전 디렉토리 사용: 월별 디렉토리 아래에 `v1`, `v2`, `v3`처럼 버전 하위 디렉토리를 두고, 확정판만 공유합니다.
-- Excel의 “ICS 링크 기본 경로”도 해당 버전 경로를 사용합니다(예: `/ics/2025-10/v3/`). 그러면 v4를 만들어도 기존 링크는 v3를 가리킵니다.
-- 최신 공개 버전을 바꾸고 싶을 때만 `scripts/release_ics.sh ... --set-latest`로 `index.html` 리다이렉트를 최신으로 갱신하세요(브라우징 편의용).
-- 권한 관리: GitHub Pages의 파일은 리포에 커밋/푸시해야만 바뀝니다. 앱 페이지에서 ‘만들기’를 눌러도 서버에 올라가지 않으므로, 유지관리자만 릴리스 스크립트를 실행/배포하도록 운영하세요.
-
-갱신/재생성 시 동작
-- 앱에서 다시 생성 후 JSON→ICS를 동일 경로(예: `ics/2025-01/이름.ics`)에 덮어쓰면, 구독 중인 사용자에게 자동 반영됩니다.
-- 캘린더 제공자별 새로고침 주기는 수시간~최대 24시간 정도 지연될 수 있습니다(예: Google Calendar는 대개 수시간 간격).
-- 중복 방지: 이벤트 UID를 날짜+역할+이름 기반으로 안정적으로 생성하도록 구현되어 있어, 같은 URL을 구독한 사용자는 변경된 동일 이벤트가 덮어써집니다.
-
-비고: GitHub Pages는 정적 호스팅이라 .ics 파일만 올려도 `text/calendar`로 서비스됩니다(파일 확장자 기반). 월이 바뀔 때마다 위 과정을 반복하세요.
+### 팁
+- 개인별로 캘린더를 분리하고 싶다면, 먼저 비어있는 보조 캘린더를 만들어 그 캘린더로 가져오세요.
+- 같은 일정을 여러 번 가져오면 중복될 수 있습니다. 가져오기 전 기존 동일 월의 이벤트를 확인해 주세요.
