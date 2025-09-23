@@ -102,3 +102,80 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .report-table th, .report-table td { border: 1px solid var(--grid); padding: 6px 8px; }
 .report-table th { background: #0f1318; color: var(--muted); text-align: left; }
 .report-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.report-table tr.weekend td { background: rgba(56, 189, 248, 0.08); }
+.report-table tr.holiday td { background: rgba(250, 204, 21, 0.10); }
+
+/* R-year tags for readability */
+.tag { display: inline-block; padding: 0 6px; border-radius: 6px; margin-right: 6px; font-size: 11px; opacity: 0.9; }
+.tag.R1 { background: rgba(59,130,246,0.25); border: 1px solid rgba(59,130,246,0.35); }
+.tag.R2 { background: rgba(16,185,129,0.25); border: 1px solid rgba(16,185,129,0.35); }
+.tag.R3 { background: rgba(245,158,11,0.25); border: 1px solid rgba(245,158,11,0.35); }
+.tag.R4 { background: rgba(236,72,153,0.25); border: 1px solid rgba(236,72,153,0.35); }
+
+.roster .report-table td span.name { margin-left: 4px; }
+.report .banner { margin: 10px 0; padding: 8px 10px; border: 1px solid var(--grid); border-radius: 8px; background: #0f1318; color: var(--text); }
+
+/* Loading overlay */
+.loading-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 999;
+}
+.loading-overlay.show { display: flex; }
+.loading-box {
+  background: #0f1318;
+  border: 1px solid var(--grid);
+  border-radius: 12px;
+  padding: 16px 20px;
+  min-width: 260px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.spinner {
+  width: 22px;
+  height: 22px;
+  border: 3px solid rgba(255,255,255,0.2);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+.loading-text { color: var(--text); font-size: 14px; }
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+/* Carry-over section distinct styling */
+.carryover-section {
+  margin-top: 14px;
+  border: 1px solid rgba(94,234,212,0.35);
+  border-radius: 10px;
+  background: rgba(45, 212, 191, 0.06);
+}
+.carryover-section .legend.title {
+  color: var(--accent);
+  font-weight: 700;
+  padding: 8px 0;
+}
+
+/* Section cards for clarity */
+.section-card {
+  margin-top: 14px;
+  border: 1px solid var(--grid);
+  border-radius: 10px;
+  background: rgba(255,255,255,0.02);
+  padding: 6px 10px 10px;
+}
+.section-card .legend.title { font-weight: 700; padding: 8px 0; }
+
+/* Previous-stats number inputs */
+#prev-stats-ui input[type="number"] {
+  width: 64px;
+  background: #0e1116;
+  color: var(--text);
+  border: 1px solid var(--grid);
+  border-radius: 8px;
+  padding: 6px 8px;
+}

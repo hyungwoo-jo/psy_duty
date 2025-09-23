@@ -9,7 +9,7 @@
   <body>
     <header>
       <h1>당직표 생성기 (초안)</h1>
-      <p>규칙: 하루 2명 당직, 당직 다음날 오프, 주간 72시간 초과 금지 (정규근무 월–금 8시간 가정).</p>
+      <p>규칙(개정): 평일 정규근무 8h(2명). 평일 당직 시 당일 총 21.5h(정규 8 + 당직 13.5, 휴게 2.5). 주말/공휴일 당직 21h. 평일 당직자의 다음날은 정규 면제. 공휴일 지정 유지. 주당 72h 초과 경고.</p>
     </header>
 
     <section class="controls">
@@ -18,41 +18,59 @@
         <input id="start-date" type="date" />
       </div>
       <div class="field">
-        <label for="weeks">주 수</label>
+        <label for="end-date">종료일</label>
+        <input id="end-date" type="date" />
+      </div>
+      <div class="field">
+        <label for="weeks">주 수(종료일 미지정 시)</label>
         <input id="weeks" type="number" min="1" max="8" value="4" />
       </div>
+      
+      <!-- 당직 인원 고정: 병당 1, 응당 1 (UI 옵션 제거) -->
       <div class="field field--full">
-        <label for="employees">근무자 목록 (이름, 선호옵션)</label>
+        <label for="employees">근무자 목록 (형식: R연차 이름[, 소아][, 응급])</label>
         <textarea id="employees" rows="12" placeholder="형식 예시:
-홍길동, any
-김철수, weekday
-이영희, weekend
-박민수, any
-최은지, weekday
-정유진, weekend
-권도윤, any
-서지수, any
-오세훈, weekday
-장민준, weekend
-한지우, any
-노예린, weekday">홍길동, any
-김철수, weekday
-이영희, weekend
-박민수, any
-최은지, weekday
-정유진, weekend
-권도윤, any
-서지수, any
-오세훈, weekday
-장민준, weekend
-한지우, any
-노예린, weekday</textarea>
+R1 장주만
+R1 조형우
+R2 김대근
+R2 김진아
+R2 이수연
+R3 권지영, 소아
+R3 김선민
+R3 윤준성
+R4 김지영
+R4 김현태
+R4 이동인"></textarea>
       </div>
+      <script>
+        // 초기 기본 근무자: 고정 12인 + 연차 라벨(R1~R4)
+        window.addEventListener('DOMContentLoaded', () => {
+          const el = document.querySelector('#employees');
+          if (el) el.value = [
+            'R1 윤성민',
+            'R1 장주만',
+            'R1 조형우',
+            'R2 김대근',
+            'R2 김진아',
+            'R2 이수연',
+            'R3 권지영, 소아',
+            'R3 김선민',
+            'R3 윤준성, 응급',
+            'R4 김지영',
+            'R4 김현태',
+            'R4 이동인',
+          ].join('\n');
+        });
+      </script>
       <div class="field field--full">
         <label for="holidays">공휴일 지정 (YYYY-MM-DD, 한 줄에 한 개)</label>
-        <textarea id="holidays" rows="4" placeholder="예시:
-2025-01-01
-2025-02-28"></textarea>
+        <div style="display:flex; gap:8px; align-items:flex-start; flex-wrap: wrap;">
+          <textarea id="holidays" rows="4" placeholder="예시:\n2025-01-01\n-2025-02-28 (빼기)"></textarea>
+          <div style="display:flex; flex-direction: column; gap:6px;">
+            <button type="button" id="load-kr-holidays">대한민국 공휴일 불러오기</button>
+            <button type="button" id="clear-holidays">공휴일 비우기</button>
+          </div>
+        </div>
       </div>
       <div class="field field--full">
         <label for="unavailable">개인별 불가일 (이름: 날짜, 날짜...)</label>
@@ -68,28 +86,32 @@
 홍길동: 2025-01-06  (이 주간 전체 휴가)
 김철수: 2025-01-20, 2025-02-03"></textarea>
       </div>
+      <div class="field field--full">
+        <label>이전 보정 통계 (표준화 입력)</label>
+        <div id="prev-stats-ui"></div>
+      </div>
       <div class="actions">
-        <label style="display:flex;align-items:center;gap:6px">
-          <span>최적화</span>
-          <select id="opt-level">
-            <option value="off">Off</option>
-            <option value="fast">Fast</option>
-            <option value="medium" selected>Medium</option>
-            <option value="strong">Strong</option>
-          </select>
-        </label>
         <button id="generate">당직표 생성</button>
         <button id="export-json" disabled>JSON 내보내기</button>
         <button id="export-csv" disabled>CSV 내보내기</button>
+        <button id="export-xlsx" disabled>Excel 내보내기</button>
       </div>
       <div id="messages" class="messages" aria-live="polite"></div>
     </section>
 
+    <!-- 로딩 오버레이 -->
+    <div id="loading-overlay" class="loading-overlay" aria-hidden="true">
+      <div class="loading-box">
+        <div class="spinner" aria-hidden="true"></div>
+        <div class="loading-text">당직표 생성 중… 잠시만 기다려주세요</div>
+      </div>
+    </div>
+
     <section>
       <div id="summary" class="summary"></div>
       <div id="report" class="report"></div>
-      <div class="legend">선호옵션: any(제한 없음) · weekday(평일만) · weekend(주말/공휴일만)</div>
-      <div id="calendar" class="calendar"></div>
+      <div class="legend">역할: 병당 1 · 응당 1 (매일). R3 소아턴은 수요일 당직 제외. R3 응급 태그 인원은 월간 응급 back.</div>
+      <div id="roster" class="roster"></div>
     </section>
 
     <footer>

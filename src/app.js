@@ -3,18 +3,25 @@ import { fmtDate, addDays, isWeekday, rangeDays, weekKey } from './time.js';
 
 const startInput = document.querySelector('#start-date');
 const weeksInput = document.querySelector('#weeks');
+const endInput = document.querySelector('#end-date');
 const employeesInput = document.querySelector('#employees');
 const generateBtn = document.querySelector('#generate');
 const exportJsonBtn = document.querySelector('#export-json');
 const exportCsvBtn = document.querySelector('#export-csv');
+const exportXlsxBtn = document.querySelector('#export-xlsx');
 const messages = document.querySelector('#messages');
 const summary = document.querySelector('#summary');
 const report = document.querySelector('#report');
-const calendar = document.querySelector('#calendar');
+const roster = document.querySelector('#roster');
 const holidaysInput = document.querySelector('#holidays');
 const unavailableInput = document.querySelector('#unavailable');
 const vacationsInput = document.querySelector('#vacations');
-const optLevelSelect = document.querySelector('#opt-level');
+const previousStatsUIRoot = document.querySelector('#prev-stats-ui');
+const loadingOverlay = document.querySelector('#loading-overlay');
+const loadingTextEl = loadingOverlay ? loadingOverlay.querySelector('.loading-text') : null;
+// 최적화 선택 UI 제거: 기본 strong
+// 주 계산 모드 옵션 제거: 달력 기준(월–일) 고정
+// 당직 슬롯 고정: 병당 1, 응당 1
 
 // 기본값: 다음 월요일
 setDefaultStartMonday();
@@ -22,6 +29,13 @@ setDefaultStartMonday();
 generateBtn.addEventListener('click', onGenerate);
 exportJsonBtn.addEventListener('click', onExportJson);
 exportCsvBtn.addEventListener('click', onExportCsv);
+exportXlsxBtn?.addEventListener('click', onExportXlsx);
+// 직원 목록 변경 시 보정 UI 갱신
+employeesInput.addEventListener('input', debounce(renderPreviousStatsUI, 250));
+window.addEventListener('DOMContentLoaded', renderPreviousStatsUI);
+// 공휴일 도우미 버튼
+document.querySelector('#load-kr-holidays')?.addEventListener('click', () => loadKRHolidays({ merge: true }));
+document.querySelector('#clear-holidays')?.addEventListener('click', () => { holidaysInput.value = ''; });
 
 let lastResult = null;
 
@@ -35,31 +49,41 @@ function setDefaultStartMonday() {
 }
 
 function parseEmployees(text) {
-  // 형식: 이름[,|\t| ](any|weekday|weekend|평일|주말) (옵션)
+  // 형식: R# 이름[, 소아][, 응급]
   const lines = text.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
   return lines.map((line) => {
-    // 쉼표/탭/파이프/공백 구분자 지원
-    const parts = line.split(/\s*[|,\t]\s*|\s{2,}/).map((p) => p.trim()).filter(Boolean);
-    const name = parts[0];
-    const pref = (parts[1] || 'any').toLowerCase();
-    return { name, preference: toPref(pref) };
+    const m = line.match(/^(R[1-4])\s+([^,|\t]+)(.*)$/);
+    if (m) {
+      const klass = m[1];
+      const name = m[2].trim();
+      const rest = (m[3] || '').replace(/^\s*[ ,|\t]+/, '');
+      const tags = new Set(rest.split(/[ ,|\t]+/).map(s => s.trim()).filter(Boolean));
+      const pediatric = tags.has('소아');
+      const emergency = tags.has('응급');
+      return { name, klass, pediatric, emergency, preference: 'any' };
+    }
+    // fallback: treat as name only
+    return { name: line, klass: '', pediatric: false, emergency: false, preference: 'any' };
   });
 }
 
-function toPref(s) {
-  if (!s) return 'any';
-  if (s.startsWith('weekend') || s === '주말') return 'weekend';
-  if (s.startsWith('weekday') || s === '평일') return 'weekday';
-  return 'any';
+function parseHolidayAddsRemoves(text) {
+  const add = new Set();
+  const remove = new Set();
+  const lines = String(text || '').split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+  for (const line of lines) {
+    const excl = /^[-!]\s*(\d{4}-\d{2}-\d{2})$/.exec(line);
+    if (excl) { remove.add(excl[1]); continue; }
+    const incl = /^(\d{4}-\d{2}-\d{2})$/.exec(line);
+    if (incl) add.add(incl[1]);
+  }
+  return { add, remove };
 }
 
 function parseHolidays(text) {
-  return new Set(
-    text
-      .split(/\r?\n/)
-      .map((s) => s.trim())
-      .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d))
-  );
+  const { add, remove } = parseHolidayAddsRemoves(text);
+  for (const d of remove) add.delete(d);
+  return add;
 }
 
 function parseUnavailable(text) {
@@ -83,36 +107,81 @@ function parseUnavailable(text) {
 
 function onGenerate() {
   try {
+    setLoading(true, '당직표 생성 중… 잠시만 기다려주세요');
+    disableActions(true);
     messages.textContent = '';
-    const startDate = startInput.value;
-    const weeks = Math.max(1, Math.min(8, Number(weeksInput.value || 4)));
-    const employees = parseEmployees(employeesInput.value);
+    // 렌더 기회를 준 뒤 실제 계산 수행
+    setTimeout(() => {
+      try {
+        const startDate = startInput.value;
+        const weeks = Math.max(1, Math.min(8, Number(weeksInput.value || 4)));
+        const endDate = endInput.value || null;
+        const employees = parseEmployees(employeesInput.value);
 
-    const holidays = [...parseHolidays(holidaysInput.value)];
-    const unavailable = parseUnavailable(unavailableInput.value);
-    const optimization = (optLevelSelect.value || 'medium');
-    const vacations = parseVacations(vacationsInput.value);
-    const result = generateSchedule({ startDate, weeks, employees, holidays, unavailableByName: Object.fromEntries(unavailable), vacationWeeksByName: Object.fromEntries(vacations), optimization });
-    lastResult = result;
-    renderSummary(result);
-    renderReport(result);
-    renderCalendar(result);
-    exportJsonBtn.disabled = false;
-    exportCsvBtn.disabled = false;
+        const holidays = [...parseHolidays(holidaysInput.value)];
+        const unavailable = parseUnavailable(unavailableInput.value);
+        const optimization = 'strong';
+        const budgetMs = getTimeBudgetMsFromQuery();
+        const weekMode = 'calendar';
+        const weekdaySlots = 2; // 병당 1 + 응당 1
+        const vacations = parseVacations(vacationsInput.value, (d) => weekKey(new Date(d)));
+        let result = generateSchedule({ startDate, endDate, weeks, weekMode, employees, holidays, unavailableByName: Object.fromEntries(unavailable), vacationWeeksByName: Object.fromEntries(vacations), optimization, weekdaySlots, weekendSlots: 2, timeBudgetMs: budgetMs });
+        // 자동 재시도: 주 70h 초과가 있으면 최대 5회까지 재시도
+        let best = result;
+        let bestEx = countSoftExceed(result, 70);
+        if (bestEx > 0) {
+          for (let i = 1; i <= 5; i += 1) {
+            setLoading(true, `당직표 생성 중… (재시도 ${i}/5)`);
+            const cand = generateSchedule({ startDate, endDate, weeks, weekMode, employees, holidays, unavailableByName: Object.fromEntries(unavailable), vacationWeeksByName: Object.fromEntries(vacations), optimization, weekdaySlots, weekendSlots: 2, timeBudgetMs: budgetMs });
+            const ex = countSoftExceed(cand, 70);
+            if (ex === 0) { best = cand; bestEx = 0; break; }
+            if (ex < bestEx) { best = cand; bestEx = ex; }
+          }
+        }
 
-    // 경고: 불가일/휴가 이름 확인
-    const names = new Set(employees.map((e) => e.name));
-    const unknownUnavail = [...unavailable.keys()].filter((n) => !names.has(n));
-    const unknownVacs = [...vacations.keys()].filter((n) => !names.has(n));
-    const notes = [];
-    if (unknownUnavail.length) notes.push(`불가일 이름 불일치: ${unknownUnavail.join(', ')}`);
-    if (unknownVacs.length) notes.push(`휴가 이름 불일치: ${unknownVacs.join(', ')}`);
-    messages.textContent = notes.join(' | ');
+        lastResult = best;
+        renderSummary(best);
+        const prev = getPreviousStatsFromUI();
+        renderReport(best, { previous: prev });
+        renderRoster(best);
+        exportJsonBtn.disabled = false;
+        exportCsvBtn.disabled = false;
+        if (exportXlsxBtn) exportXlsxBtn.disabled = false;
+
+        if (bestEx > 0) {
+          const warnMsg = `주의: 일부 주의 70h 초과가 해소되지 않았습니다 (셀 ${bestEx}개). 설정을 조정하거나 인원을 늘려주세요.`;
+          messages.textContent = messages.textContent ? (messages.textContent + ' | ' + warnMsg) : warnMsg;
+          try { alert(warnMsg); } catch {}
+        }
+        if (exportXlsxBtn) exportXlsxBtn.disabled = false;
+
+        // 경고: 불가일/휴가 이름 확인
+        const names = new Set(employees.map((e) => e.name));
+        const unknownUnavail = [...unavailable.keys()].filter((n) => !names.has(n));
+        const unknownVacs = [...vacations.keys()].filter((n) => !names.has(n));
+        const notes = [];
+        if (unknownUnavail.length) notes.push(`불가일 이름 불일치: ${unknownUnavail.join(', ')}`);
+        if (unknownVacs.length) notes.push(`휴가 이름 불일치: ${unknownVacs.join(', ')}`);
+        messages.textContent = notes.join(' | ');
+      } catch (err) {
+        console.error(err);
+        messages.textContent = err.message || String(err);
+        exportJsonBtn.disabled = true;
+        exportCsvBtn.disabled = true;
+        if (exportXlsxBtn) exportXlsxBtn.disabled = true;
+      } finally {
+        setLoading(false);
+        disableActions(false);
+      }
+    }, 30);
   } catch (err) {
     console.error(err);
     messages.textContent = err.message || String(err);
+    setLoading(false);
+    disableActions(false);
     exportJsonBtn.disabled = true;
     exportCsvBtn.disabled = true;
+    if (exportXlsxBtn) exportXlsxBtn.disabled = true;
   }
 }
 
@@ -123,134 +192,95 @@ function renderSummary(result) {
   const lines = [];
   lines.push(`기간: ${result.startDate} ~ ${endDateOf(result)}`);
   lines.push(`근무자 수: ${result.employees.length}명`);
+  const back = result.employees.find((e) => e.emergency) || result.schedule.find((d) => d.back)?.back;
+  if (back) lines.push(`응급 back: ${back.name || back}`);
   lines.push(`미충원 일수: ${totalUnderfill}일`);
   lines.push(warn ? `주의: ${[...result.warnings].join(' | ') || '충원 인원 부족일 존재'}` : '검증: 제약 내에서 생성됨');
 
-  // 인원별 통계
-  const fairness = `평균 당직시간 ${result.fairness.avgDutyHours}h / 평균 총근무시간 ${result.fairness.avgTotalHours}h`;
-  lines.push(fairness);
+  // 상세 비교는 개인별 통계 테이블에서 연차 내 기준으로 확인
 
-  const perDuty = result.stats
-    .map((s) => `${s.name}: 당직 ${s.dutyCount}회(${s.dutyHours}h, ${signed(s.dutyHoursDelta)}h)`)    
-    .join(' · ');
-  lines.push(perDuty);
-
-  const perTotal = result.stats
-    .map((s) => `${s.name}: 총 ${Math.round(s.totalHours)}h(${signed(s.totalHoursDelta)}h)`)    
-    .join(' · ');
-  lines.push(perTotal);
-
+  const wkdaySlots = result?.config?.weekdaySlots ?? 1;
+  const wkendSlots = result?.config?.weekendSlots ?? 2;
   summary.innerHTML = `
-    <div class="legend">주간 시간 = 정규(평일 8h) + 당직(24h) - (당일 평일 8h) - (다음날 평일 8h) · 목표 72±12h/주, 개인 총합 ≤ 72×(근무주수)</div>
-    <div class="${warn ? 'warn' : 'ok'}">${lines.join(' / ')}</div>
+    <div class="legend">시간 산식(개정): 평일 정규 8h(2명), 평일 당직 ${wkdaySlots}명(당일 총 21.5h = 정규 8 + 당직 13.5, 휴게 2.5), 주말/공휴일 당직 ${wkendSlots}명(각 21h). 평일 당직 다음날 정규 면제. 주당 상한: 72h, 개인 총합 ≤ 72×(근무주수)</div>
+    <div class="${warn ? 'warn' : 'ok'}">${lines.join(' / ')}${result?.meta?.elapsedMs ? ` / 최적화 ${result.meta.elapsedMs}ms` : ''}</div>
   `;
 }
 
-function renderCalendar(result) {
-  calendar.innerHTML = '';
-  const start = new Date(result.startDate);
-  const days = result.schedule.map((s) => new Date(s.date));
-
-  // 주별로 테이블 생성
-  const weeks = groupBy(result.schedule, (d) => d.weekKey);
-  for (const [wk, items] of weeks) {
-    const table = document.createElement('table');
-    table.className = 'week-grid';
-    const thead = document.createElement('thead');
-    const trh = document.createElement('tr');
-    const weekdays = ['월', '화', '수', '목', '금', '토', '일'];
-    for (const w of weekdays) {
-      const th = document.createElement('th');
-      th.textContent = w;
-      trh.appendChild(th);
-    }
-    thead.appendChild(trh);
-    table.appendChild(thead);
-
-    const bodyTr = document.createElement('tr');
-    const monday = new Date(wk);
-    for (let i = 0; i < 7; i += 1) {
-      const day = new Date(monday);
-      day.setDate(monday.getDate() + i);
-      const key = fmtDate(day);
-      const cellData = items.find((x) => x.key === key);
-      const td = document.createElement('td');
-      td.className = 'day';
-      const isWk = isWeekday(day);
-      const keyStr = fmtDate(day);
-      const isHol = (result.holidays || []).includes(keyStr);
-      if (isHol) td.classList.add('holiday');
-      else if (!isWk) td.classList.add('weekend');
-      const dateEl = document.createElement('div');
-      dateEl.className = 'date';
-      dateEl.textContent = `${key}`;
-      td.appendChild(dateEl);
-      const dutiesEl = document.createElement('div');
-      dutiesEl.className = 'duties';
-      if (cellData) {
-        for (const d of cellData.duties) {
-          const chip = document.createElement('div');
-          chip.className = 'duty-chip';
-          chip.textContent = d.name;
-          dutiesEl.appendChild(chip);
-        }
-        if (cellData.underfilled) {
-          td.classList.add('underfill');
-          if (cellData.reasons && cellData.reasons.length) {
-            td.title = '미충원 사유\n' + cellData.reasons.join('\n');
-          }
-        }
-      } else {
-        // 범위 밖
-        td.style.opacity = '0.3';
-      }
-      td.appendChild(dutiesEl);
-      bodyTr.appendChild(td);
-    }
-    const tbody = document.createElement('tbody');
-    tbody.appendChild(bodyTr);
-    table.appendChild(tbody);
-    calendar.appendChild(table);
-  }
-}
-
-function renderReport(result) {
-  report.innerHTML = '';
+function renderRoster(result) {
+  roster.innerHTML = '';
   const table = document.createElement('table');
   table.className = 'report-table';
   const thead = document.createElement('thead');
   const thr = document.createElement('tr');
-  const hdrs = ['이름', '선호', '당직(회)', '당직시간(h)', 'Δ당직(h)', '총근무시간(h)', 'Δ총(h)'];
+  const hdrs = ['날짜', '병당', '응당', '응급 back'];
   for (const h of hdrs) {
-    const th = document.createElement('th');
-    th.textContent = h;
-    thr.appendChild(th);
+    const th = document.createElement('th'); th.textContent = h; thr.appendChild(th);
   }
-  thead.appendChild(thr);
-  table.appendChild(thead);
-
+  thead.appendChild(thr); table.appendChild(thead);
   const tbody = document.createElement('tbody');
-  for (const s of result.stats) {
+  const empById = new Map(result.employees.map((e) => [e.id, e]));
+  for (const s of result.schedule) {
     const tr = document.createElement('tr');
-    const cells = [
-      s.name,
-      (result.employees.find((e) => e.id === s.id)?.preference || 'any'),
-      s.dutyCount,
-      s.dutyHours,
-      signed(s.dutyHoursDelta),
-      Math.round(s.totalHours),
-      signed(s.totalHoursDelta),
-    ];
-    cells.forEach((val, idx) => {
+    // weekend/holiday highlighting
+    const d = new Date(s.date);
+    const key = fmtDate(d);
+    const wd = d.getDay();
+    if (wd === 0 || wd === 6) tr.classList.add('weekend');
+    if ((result.holidays || []).includes(key)) tr.classList.add('holiday');
+    const cells = [];
+    // 날짜
+    cells.push(s.key);
+    // 병당/응당
+    for (let i = 0; i < 2; i += 1) {
+      const duty = s.duties[i];
+      if (duty) {
+        const emp = empById.get(duty.id) || {};
+        const span = document.createElement('span');
+        const tag = document.createElement('span');
+        tag.className = `tag ${emp.klass || ''}`; tag.textContent = emp.klass || '';
+        span.className = 'name'; span.textContent = duty.name;
+        const container = document.createElement('div');
+        container.appendChild(tag); container.appendChild(span);
+        cells.push(container);
+      } else {
+        cells.push('');
+      }
+    }
+    // back
+    if (s.back) {
+      const emp = empById.get(s.back.id) || {};
+      const tag = document.createElement('span'); tag.className = `tag ${emp.klass || ''}`; tag.textContent = emp.klass || '';
+      const span = document.createElement('span'); span.className = 'name'; span.textContent = s.back.name;
+      const container = document.createElement('div'); container.appendChild(tag); container.appendChild(span);
+      cells.push(container);
+    } else {
+      cells.push('');
+    }
+
+    cells.forEach((val) => {
       const td = document.createElement('td');
-      td.textContent = String(val);
-      if (idx >= 2) td.classList.add('num');
+      if (val instanceof HTMLElement) td.appendChild(val); else td.textContent = String(val);
       tr.appendChild(td);
     });
+    if (s.underfilled) tr.classList.add('underfill');
     tbody.appendChild(tr);
   }
   table.appendChild(tbody);
-  report.appendChild(table);
+  roster.appendChild(table);
+}
+
+function renderReport(result, opts = {}) {
+  report.innerHTML = '';
+  // Back banner
+  const backEmp = result.employees.find((e) => e.emergency) || null;
+  if (backEmp) {
+    const bn = document.createElement('div');
+    bn.className = 'banner';
+    bn.textContent = `응급 back: ${backEmp.name} (R연차=${backEmp.klass || '-'})`;
+    report.appendChild(bn);
+  }
+  // 전체 연차(전원) 단일 테이블은 제거
 
   if (result.warnings && result.warnings.length) {
     const warn = document.createElement('div');
@@ -258,6 +288,15 @@ function renderReport(result) {
     warn.textContent = `경고 ${result.warnings.length}건: ` + result.warnings.join(' | ');
     report.appendChild(warn);
   }
+
+  // 주별 시간 통계 테이블
+  renderWeeklyHours(result);
+
+  // 개인별 수련시간/데이오프 통계
+  renderPersonalStats(result);
+
+  // carry-over 통계 (stat-to-pass)
+  renderCarryoverStats(result, opts);
 }
 
 function onExportJson() {
@@ -267,13 +306,44 @@ function onExportJson() {
 
 function onExportCsv() {
   if (!lastResult) return;
-  const rows = [['date', 'name1', 'name2']];
+  const rows = [['date', 'byungdang', 'eungdang', 'back']];
   for (const d of lastResult.schedule) {
     const names = d.duties.map((x) => x.name);
-    rows.push([d.key, names[0] || '', names[1] || '']);
+    rows.push([d.key, names[0] || '', names[1] || '', d.back?.name || '']);
   }
   const csv = rows.map((r) => r.map(csvEscape).join(',')).join('\n');
   download('duty-roster.csv', csv);
+}
+
+function onExportXlsx() {
+  if (!lastResult) return;
+  // Build roster sheet with basic styling
+  const rosterRows = [
+    [ { v: '날짜', style: 'Header' }, { v: '병당', style: 'Header' }, { v: '응당', style: 'Header' }, { v: '응급 back', style: 'Header' } ]
+  ];
+  const holidaySet = new Set(lastResult.holidays || []);
+  for (const d of lastResult.schedule) {
+    const names = d.duties.map((x) => x.name);
+    const dt = new Date(d.date);
+    const key = fmtDate(dt);
+    const wd = dt.getDay();
+    const isWeekend = (wd === 0 || wd === 6);
+    const isHoliday = holidaySet.has(key);
+    const rowStyle = isHoliday ? 'Holiday' : (isWeekend ? 'Weekend' : null);
+    rosterRows.push([
+      { v: d.key, style: d.underfilled && !rowStyle ? 'Underfill' : (rowStyle || undefined) },
+      { v: names[0] || '', style: rowStyle || undefined },
+      { v: names[1] || '', style: rowStyle || undefined },
+      { v: d.back?.name || '', style: rowStyle || undefined },
+    ]);
+  }
+  const prev = getPreviousStatsFromUI();
+  const carryRows = buildCarryoverRows(lastResult, prev);
+  const xml = buildSpreadsheetXML([
+    { name: 'Roster', rows: rosterRows },
+    { name: 'StatToPass', rows: carryRows },
+  ]);
+  download('duty-roster.xls', xml);
 }
 
 function csvEscape(s) {
@@ -283,7 +353,9 @@ function csvEscape(s) {
 }
 
 function download(filename, content) {
-  const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+  const isXls = filename.toLowerCase().endsWith('.xls');
+  const type = isXls ? 'application/vnd.ms-excel;charset=utf-8' : 'text/plain;charset=utf-8';
+  const blob = new Blob([content], { type });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -292,7 +364,88 @@ function download(filename, content) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+function xmlEscape(s) {
+  return String(s)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&apos;');
+}
+
+function buildSpreadsheetXML(sheets) {
+  const header = `<?xml version="1.0"?>\n<?mso-application progid=\"Excel.Sheet\"?>\n<Workbook xmlns=\"urn:schemas-microsoft-com:office:spreadsheet\" xmlns:o=\"urn:schemas-microsoft-com:office:office\" xmlns:x=\"urn:schemas-microsoft-com:office:excel\" xmlns:ss=\"urn:schemas-microsoft-com:office:spreadsheet\">`;
+  const styles = `
+    <Styles>
+      <Style ss:ID="Header"><Font ss:Bold="1"/><Alignment ss:Horizontal="Center"/></Style>
+      <Style ss:ID="Weekend"><Interior ss:Color="#E8F6FF" ss:Pattern="Solid"/></Style>
+      <Style ss:ID="Holiday"><Interior ss:Color="#FFF6D5" ss:Pattern="Solid"/></Style>
+      <Style ss:ID="Underfill"><Interior ss:Color="#FDE2E2" ss:Pattern="Solid"/></Style>
+      <Style ss:ID="Pos"><Font ss:Color="#22C55E"/></Style>
+      <Style ss:ID="Neg"><Font ss:Color="#EF4444"/></Style>
+    </Styles>`;
+  const tail = '</Workbook>';
+  const ws = sheets.map((sh) => sheetXML(sh.name, sh.rows)).join('');
+  return header + styles + ws + tail;
+}
+
+function sheetXML(name, rows) {
+  const safe = xmlEscape(name || 'Sheet1');
+  const rs = rows.map((r) => {
+    const cells = r.map((cell) => {
+      const obj = (cell && typeof cell === 'object' && 'v' in cell) ? cell : { v: cell };
+      const sid = obj.style ? ` ss:StyleID=\"${xmlEscape(obj.style)}\"` : '';
+      return `<Cell${sid}><Data ss:Type=\"String\">${xmlEscape(obj.v ?? '')}</Data></Cell>`;
+    }).join('');
+    return `<Row>${cells}</Row>`;
+  }).join('');
+  return `<Worksheet ss:Name=\"${safe}\"><Table>${rs}</Table></Worksheet>`;
+}
+
+function buildCarryoverRows(result, prev) {
+  const rows = [[ { v: '연차', style: 'Header' }, { v: '항목', style: 'Header' }, { v: '이름', style: 'Header' }, { v: '보정치', style: 'Header' } ]];
+  const { byungCount, eungCount, dayOff } = computeRoleAndOffCounts(result);
+  const groups = new Map();
+  for (const e of result.employees) {
+    const k = e.klass || '기타';
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(e);
+  }
+  const order = ['R1','R2','R3','R4','기타'];
+  for (const klass of order) {
+    if (!groups.has(klass)) continue;
+    const people = groups.get(klass);
+    // 병당/응당: 역할별 독립 균형 보정
+    {
+      const prevByList = (prev.entriesByClassRole.get(klass)?.byung) || [];
+      const prevEuList = (prev.entriesByClassRole.get(klass)?.eung) || [];
+      const prevByByName = new Map(prevByList.map((e) => [e.name, Number(e.delta) || 0]));
+      const prevEuByName = new Map(prevEuList.map((e) => [e.name, Number(e.delta) || 0]));
+      const curBy = people.map((p) => ({ id: p.id, name: p.name, count: Number(byungCount.get(p.id) || 0) + (prevByByName.get(p.name) || 0) }));
+      const curEu = people.map((p) => ({ id: p.id, name: p.name, count: Number(eungCount.get(p.id) || 0) + (prevEuByName.get(p.name) || 0) }));
+      const byDeltas = computeFairMultiDeltas(curBy, 'low');
+      const euDeltas = computeFairMultiDeltas(curEu, 'low');
+      if (byDeltas.length === 0) rows.push([klass, '병당', '-', '-']);
+      else for (const d of byDeltas) rows.push([ klass, '병당', d.name, { v: signed(d.delta), style: d.delta > 0 ? 'Pos' : 'Neg' } ]);
+      if (euDeltas.length === 0) rows.push([klass, '응당', '-', '-']);
+      else for (const d of euDeltas) rows.push([ klass, '응당', d.name, { v: signed(d.delta), style: d.delta > 0 ? 'Pos' : 'Neg' } ]);
+    }
+    // Day-off: 평균 분배 보정
+    {
+      const prevList = (prev.entriesByClassRole.get(klass)?.off) || [];
+      const prevByName = new Map(prevList.map((e) => [e.name, Number(e.delta) || 0]));
+      const counts = people.map((p) => ({ id: p.id, name: p.name, count: Number(dayOff.get(p.id) || 0) + (prevByName.get(p.name) || 0) }));
+      const deltas = computeFairMultiDeltas(counts, 'low');
+      if (deltas.length === 0) rows.push([klass, 'Day-off', '-', '-']);
+      else for (const d of deltas) rows.push([ klass, 'Day-off', d.name, { v: signed(d.delta), style: d.delta > 0 ? 'Pos' : 'Neg' } ]);
+    }
+    rows.push(['','','','']);
+  }
+  return rows;
+}
+
 function endDateOf(result) {
+  if (result.endDate) return result.endDate;
   const start = new Date(result.startDate);
   const end = addDays(start, result.weeks * 7 - 1);
   return fmtDate(end);
@@ -308,11 +461,32 @@ function groupBy(arr, keyFn) {
   return map;
 }
 
+function getTimeBudgetMsFromQuery() {
+  try {
+    const qs = new URLSearchParams(window.location.search);
+    const v = Number(qs.get('budget'));
+    if (Number.isFinite(v) && v > 200 && v < 30000) return Math.floor(v);
+  } catch {}
+  return 5000; // default 5s to strengthen in-class balancing
+}
+
 function signed(n) {
   return (n > 0 ? '+' : '') + n;
 }
 
-function parseVacations(text) {
+function countSoftExceed(result, limit = 72) {
+  try {
+    let cnt = 0;
+    for (const s of result.stats || []) {
+      for (const wk of Object.keys(s.weeklyHours || {})) {
+        if ((s.weeklyHours[wk] || 0) > limit + 1e-9) cnt += 1;
+      }
+    }
+    return cnt;
+  } catch { return 0; }
+}
+
+function parseVacations(text, weekKeyFn = (d) => weekKey(new Date(d))) {
   // 형식: 이름: YYYY-MM-DD, YYYY-MM-DD ...  (각 날짜가 속한 주 전체 휴가)
   const map = new Map();
   const lines = text.split(/\r?\n/);
@@ -326,7 +500,544 @@ function parseVacations(text) {
     const dates = (rest.match(/\d{4}-\d{2}-\d{2}/g) || []).map((d) => d.trim());
     if (!map.has(name)) map.set(name, new Set());
     const set = map.get(name);
-    for (const d of dates) set.add(weekKey(new Date(d)));
+    for (const d of dates) set.add(weekKeyFn(d));
   }
   return map;
+}
+
+function renderWeeklyHours(result) {
+  // 주 키 수집 및 정렬
+  const weekKeysSet = new Set();
+  for (const s of result.stats) {
+    for (const wk of Object.keys(s.weeklyHours || {})) weekKeysSet.add(wk);
+  }
+  const weekKeys = [...weekKeysSet].sort();
+  if (!weekKeys.length) return;
+
+  const wrap = document.createElement('div');
+  wrap.className = 'weekly-report section-card';
+  const title = document.createElement('div');
+  title.className = 'legend title';
+  title.textContent = '주별 시간 통계 (연차 내)';
+  wrap.appendChild(title);
+
+  const empById = new Map(result.employees.map((e) => [e.id, e]));
+  const groups = new Map();
+  for (const s of result.stats) {
+    const emp = empById.get(s.id) || {};
+    const k = emp.klass || '기타';
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(s);
+  }
+  const order = ['R1','R2','R3','R4','기타'];
+  for (const klass of order) {
+    if (!groups.has(klass)) continue;
+    const header = document.createElement('div');
+    header.className = 'legend';
+    header.textContent = `연차: ${klass}`;
+    wrap.appendChild(header);
+
+    const table = document.createElement('table');
+    table.className = 'report-table';
+    const thead = document.createElement('thead');
+    const thr = document.createElement('tr');
+    const headers = ['이름', ...weekKeys, '합계'];
+    for (const h of headers) { const th = document.createElement('th'); th.textContent = h; thr.appendChild(th); }
+    thead.appendChild(thr); table.appendChild(thead);
+    const tbody = document.createElement('tbody');
+    for (const s of groups.get(klass)) {
+      const tr = document.createElement('tr');
+      const total = (s.totalHours).toFixed(1);
+      const cells = [s.name, ...weekKeys.map((wk) => ((s.weeklyHours[wk] || 0)).toFixed(1)), total];
+      cells.forEach((val, idx) => {
+        const td = document.createElement('td');
+        td.textContent = String(val);
+        if (idx >= 1) td.classList.add('num');
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    }
+    table.appendChild(tbody);
+    wrap.appendChild(table);
+  }
+  report.appendChild(wrap);
+}
+
+// 보조: 로딩 오버레이/버튼 상태
+function setLoading(flag, text) {
+  if (!loadingOverlay) return;
+  if (typeof text === 'string' && loadingTextEl) loadingTextEl.textContent = text;
+  if (flag) loadingOverlay.classList.add('show'); else loadingOverlay.classList.remove('show');
+}
+function disableActions(flag) {
+  const disabled = !!flag;
+  generateBtn.disabled = disabled;
+  // Export buttons follow disabled flag; if not disabled, enable only when result exists
+  exportJsonBtn.disabled = disabled || !lastResult;
+  exportCsvBtn.disabled = disabled || !lastResult;
+  if (exportXlsxBtn) exportXlsxBtn.disabled = disabled || !lastResult;
+}
+
+// carry-over 계산/렌더링
+function renderCarryoverStats(result, opts = {}) {
+  const wrap = document.createElement('div');
+  wrap.className = 'weekly-report carryover-section';
+  const title = document.createElement('div');
+  title.className = 'legend title';
+  title.textContent = 'Stat-to-Pass (다음달로 넘길 보정치)';
+  wrap.appendChild(title);
+
+  // 준비: 인원/연차
+  const empById = new Map(result.employees.map((e) => [e.id, e]));
+  const groups = new Map();
+  for (const e of result.employees) {
+    const k = e.klass || '기타';
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(e);
+  }
+
+  // 역할별/오프 카운트 산출
+  const { byungCount, eungCount, dayOff } = computeRoleAndOffCounts(result);
+  const prev = opts.previous || { sumByClassRole: new Map(), entriesByClassRole: new Map(), entries: [] };
+
+  const order = ['R1','R2','R3','R4','기타'];
+  for (const klass of order) {
+    if (!groups.has(klass)) continue;
+    if (klass === 'R3') continue; // R3 보류
+    const people = groups.get(klass);
+    const sectionsOffOnly = [ { key: 'off', label: 'Day-off', map: dayOff } ];
+
+    const header = document.createElement('div');
+    header.className = 'legend';
+    header.textContent = `연차: ${klass}`;
+    wrap.appendChild(header);
+
+    const table = document.createElement('table');
+    table.className = 'report-table';
+    const thead = document.createElement('thead');
+    const thr = document.createElement('tr');
+    for (const h of ['항목', '보정치']) { const th = document.createElement('th'); th.textContent = h; thr.appendChild(th); }
+    thead.appendChild(thr);
+    table.appendChild(thead);
+    const tbody = document.createElement('tbody');
+
+    // 병당/응당은 각 역할별 독립 균형으로 산출 (이전 보정 반영)
+    {
+      const prevByList = (prev.entriesByClassRole.get(klass)?.byung) || [];
+      const prevEuList = (prev.entriesByClassRole.get(klass)?.eung) || [];
+      const prevByByName = new Map(prevByList.map((e) => [e.name, Number(e.delta) || 0]));
+      const prevEuByName = new Map(prevEuList.map((e) => [e.name, Number(e.delta) || 0]));
+      const curBy = people.map((p) => ({ id: p.id, name: p.name, count: Number(byungCount.get(p.id) || 0) + (prevByByName.get(p.name) || 0) }));
+      const curEu = people.map((p) => ({ id: p.id, name: p.name, count: Number(eungCount.get(p.id) || 0) + (prevEuByName.get(p.name) || 0) }));
+      const byDeltas = computeFairMultiDeltas(curBy, 'low');
+      const euDeltas = computeFairMultiDeltas(curEu, 'low');
+      // 병당
+      const trB = document.createElement('tr');
+      const tdbL = document.createElement('td'); tdbL.textContent = '병당'; trB.appendChild(tdbL);
+      const tdbR = document.createElement('td'); tdbR.textContent = byDeltas.length ? byDeltas.map((d) => `${d.name} ${signed(d.delta)}`).join(' · ') : '-'; trB.appendChild(tdbR);
+      tbody.appendChild(trB);
+      // 응당
+      const trE = document.createElement('tr');
+      const tdeL = document.createElement('td'); tdeL.textContent = '응당'; trE.appendChild(tdeL);
+      const tdeR = document.createElement('td'); tdeR.textContent = euDeltas.length ? euDeltas.map((d) => `${d.name} ${signed(d.delta)}`).join(' · ') : '-'; trE.appendChild(tdeR);
+      tbody.appendChild(trE);
+    }
+    // Day-off는 개별 평균 분배 보정
+    for (const sec of sectionsOffOnly) {
+      const prevList = (prev.entriesByClassRole.get(klass)?.[sec.key]) || [];
+      const prevByName = new Map(prevList.map((e) => [e.name, Number(e.delta) || 0]));
+      const counts = people.map((p) => ({ id: p.id, name: p.name, count: Number(sec.map.get(p.id) || 0) + (prevByName.get(p.name) || 0) }));
+      const deltas = computeFairMultiDeltas(counts, 'low');
+      const td = document.createElement('td');
+      const tr = document.createElement('tr');
+      const itemTd = document.createElement('td'); itemTd.textContent = sec.label; tr.appendChild(itemTd);
+      const desc = deltas.length ? deltas.map((d) => `${d.name} ${signed(d.delta)}`).join(' · ') : '-';
+      td.textContent = desc;
+      tr.appendChild(td);
+      tbody.appendChild(tr);
+    }
+    table.appendChild(tbody);
+    wrap.appendChild(table);
+  }
+
+  report.appendChild(wrap);
+}
+
+function computeRoleAndOffCounts(result) {
+  const byungCount = new Map();
+  const eungCount = new Map();
+  const dayOff = new Map();
+  const holidays = new Set(result.holidays || []);
+  const isWorkdayLocal = (date) => {
+    const d = new Date(date);
+    const key = fmtDate(d);
+    const wd = d.getDay();
+    return wd >= 1 && wd <= 5 && !holidays.has(key);
+  };
+  for (let i = 0; i < result.schedule.length; i += 1) {
+    const cell = result.schedule[i];
+    const next = result.schedule[i + 1];
+    if (cell.duties && cell.duties.length) {
+      const b = cell.duties[0]; if (b) byungCount.set(b.id, (byungCount.get(b.id) || 0) + 1);
+      const e = cell.duties[1]; if (e) eungCount.set(e.id, (eungCount.get(e.id) || 0) + 1);
+    }
+    if (next && isWorkdayLocal(next.date)) {
+      for (const d of (cell.duties || [])) dayOff.set(d.id, (dayOff.get(d.id) || 0) + 1);
+    }
+  }
+  return { byungCount, eungCount, dayOff };
+}
+
+// 보정 규칙:
+// - 두 수가 같고 하나만 다른 전형 케이스: outlier를 mode로 맞춤(±diff) — 1명만 보정
+// - 그 외 복잡한 케이스: 중앙값 기준 편차를 계산하고, 한 명에게 총합을 모아 전달(±sum) — 1명만 보정
+function computeCleanCarryover(entries) {
+  if (!entries.length) return [];
+  const counts = entries.map((e) => e.count);
+  const freq = new Map();
+  for (const c of counts) freq.set(c, (freq.get(c) || 0) + 1);
+  let mode = null, modeCnt = 0;
+  for (const [k, v] of freq) { if (v > modeCnt) { mode = k; modeCnt = v; } }
+  const outliers = entries.filter((e) => e.count !== mode);
+  if (modeCnt === entries.length) return []; // 모두 동일
+  if (modeCnt === entries.length - 1 && outliers.length === 1) {
+    const o = outliers[0];
+    const delta = mode - o.count; // 양수: 다음달 더, 음수: 다음달 덜
+    if (delta === 0) return [];
+    return [{ id: o.id, name: o.name, delta }];
+  }
+  // 복잡 케이스: 중앙값 기준으로 한 명에게 합산해서 전달
+  const sorted = counts.slice().sort((a, b) => a - b);
+  const median = sorted[Math.floor(sorted.length / 2)];
+  const deltas = entries.map((e) => ({ id: e.id, name: e.name, delta: median - e.count }));
+  const net = deltas.reduce((a, b) => a + b.delta, 0);
+  if (net === 0) {
+    // 한 명만 남기고 합산(가독성): 절대값이 가장 큰 사람에게 몰아주기
+    let maxIdx = 0; let maxAbs = Math.abs(deltas[0].delta);
+    for (let i = 1; i < deltas.length; i += 1) { const ab = Math.abs(deltas[i].delta); if (ab > maxAbs) { maxAbs = ab; maxIdx = i; } }
+    const keep = deltas[maxIdx];
+    const sum = deltas.reduce((a, b, i) => a + (i === maxIdx ? 0 : b.delta), 0);
+    return [{ id: keep.id, name: keep.name, delta: keep.delta - sum }];
+  } else {
+    // 합이 0이 아니면, 합을 반대 부호의 사람에게 몰아서 1명만 남김
+    // 반대 부호 후보가 없으면 절대값이 큰 사람 선택
+    let idx = deltas.findIndex((d) => (net > 0 ? d.delta < 0 : d.delta > 0));
+    if (idx < 0) {
+      let best = 0; let bestAbs = Math.abs(deltas[0].delta);
+      for (let i = 1; i < deltas.length; i += 1) { const ab = Math.abs(deltas[i].delta); if (ab > bestAbs) { bestAbs = ab; best = i; } }
+      idx = best;
+    }
+    const target = deltas[idx];
+    return [{ id: target.id, name: target.name, delta: target.delta - net }];
+  }
+}
+
+// 다자 균형: 총합 보존(sum deltas = 0), 가능한 한 값들을 floor(avg) 또는 ceil(avg)로 맞춤
+function computeFairMultiDeltas(entries, favor = 'low') {
+  if (!entries.length) return [];
+  const total = entries.reduce((a, e) => a + Number(e.count || 0), 0);
+  const n = entries.length;
+  const base = Math.floor(total / n);
+  const r = total - base * n; // r명은 base+1 목표, 나머지는 base
+  // favor='low': 낮은 값부터 base+1 부여(낮은 사람을 끌어올림)
+  // favor='high': 높은 값부터 base+1 부여(감소량 최소화)
+  const sorted = entries
+    .map((e, i) => ({ i, ...e }))
+    .sort((a, b) => favor === 'low' ? (a.count - b.count) : (b.count - a.count));
+  const targets = new Array(n).fill(base);
+  for (let k = 0; k < r; k += 1) targets[sorted[k].i] = base + 1;
+  const deltas = entries.map((e, i) => ({ id: e.id, name: e.name, delta: targets[i] - Number(e.count || 0) }));
+  return deltas.filter((d) => d.delta !== 0);
+}
+
+// 역할 스왑 기반 보정치: by/eu 한 쌍을 동시에 맞춤 (개인 총합 유지)
+function computeRoleSwapDeltas(byEntries, euEntries) {
+  const n = byEntries.length;
+  if (n === 0 || euEntries.length !== n) return { byDeltas: [], euDeltas: [] };
+  // by의 총합을 보존하면서 공정하게 분배: 낮은 사람을 우선 끌어올림
+  const byDeltas = computeFairMultiDeltas(byEntries, 'low');
+  // map to per index for sign coupling
+  const idxByName = new Map(byEntries.map((e, i) => [e.name, i]));
+  const deltaByArr = new Array(n).fill(0);
+  for (const d of byDeltas) {
+    const i = idxByName.get(d.name);
+    if (i != null) deltaByArr[i] = d.delta;
+  }
+  const byOut = [];
+  const euOut = [];
+  for (let i = 0; i < n; i += 1) {
+    if (deltaByArr[i]) byOut.push({ name: byEntries[i].name, delta: deltaByArr[i] });
+    if (deltaByArr[i]) euOut.push({ name: euEntries[i].name, delta: -deltaByArr[i] });
+  }
+  return { byDeltas: byOut, euDeltas: euOut };
+}
+
+// R3 전용: 총 당직(병당+응당) 균형을 응당 보정으로 표현
+function computeR3EungCarryover(people, byungCount, eungCount) {
+  const arr = people.map((p) => ({
+    id: p.id,
+    name: p.name,
+    pediatric: !!p.pediatric,
+    total: Number(byungCount.get(p.id) || 0) + Number(eungCount.get(p.id) || 0),
+    eung: Number(eungCount.get(p.id) || 0),
+  }));
+  if (arr.length === 0) return null;
+  // 목표: 총 당직 수를 중앙값에 맞춤
+  const totals = arr.map((x) => x.total).sort((a,b)=>a-b);
+  const target = totals[Math.floor(totals.length/2)];
+  // 과다/과소자 파악
+  const over = arr.filter((x) => x.total > target);
+  const under = arr.filter((x) => x.total < target);
+  if (over.length === 0 && under.length === 0) return null;
+  // 선호: 비소아 인원 먼저 대상 지정
+  const pick = (list, wantUnder=false) => {
+    const pref = list.filter((x) => !x.pediatric);
+    if (pref.length) return wantUnder ? pref[0] : pref[0];
+    return list[0];
+  };
+  // 하나의 깨끗한 보정값으로 표현: 과소자에게 +k (응당), 또는 과다자에게 -k
+  if (under.length) {
+    const u = pick(under, true);
+    const need = target - u.total;
+    if (need !== 0) return { id: u.id, name: u.name, delta: need };
+  }
+  if (over.length) {
+    const o = pick(over, false);
+    const give = o.total - target;
+    if (give !== 0) return { id: o.id, name: o.name, delta: -give };
+  }
+  return null;
+}
+
+// 이전 보정 파서: 텍스트에서 (이름, 역할, 부호있는 정수)를 추출
+function getPreviousStatsFromUI() {
+  const root = previousStatsUIRoot;
+  if (!root) return { entries: [], sumByClassRole: new Map(), entriesByClassRole: new Map() };
+  const employees = parseEmployees(employeesInput.value);
+  const byName = new Map(employees.map((e, idx) => [e.name, { ...e, id: idx }]));
+  const entries = [];
+  root.querySelectorAll('tr[data-name]')?.forEach((tr) => {
+    const name = tr.getAttribute('data-name');
+    const emp = byName.get(name);
+    if (!emp) return;
+    const by = Number(tr.querySelector('input[data-role="byung"]').value);
+    const eu = Number(tr.querySelector('input[data-role="eung"]').value);
+    const off = Number(tr.querySelector('input[data-role="off"]').value);
+    if (by) entries.push({ id: emp.id, name, klass: emp.klass || '', role: 'byung', delta: by });
+    if (eu) entries.push({ id: emp.id, name, klass: emp.klass || '', role: 'eung', delta: eu });
+    if (off) entries.push({ id: emp.id, name, klass: emp.klass || '', role: 'off', delta: off });
+  });
+  const sumByClassRole = new Map();
+  const entriesByClassRole = new Map();
+  for (const e of entries) {
+    if (!sumByClassRole.has(e.klass)) sumByClassRole.set(e.klass, { byung: 0, eung: 0, off: 0 });
+    sumByClassRole.get(e.klass)[e.role] += e.delta;
+    if (!entriesByClassRole.has(e.klass)) entriesByClassRole.set(e.klass, { byung: [], eung: [], off: [] });
+    entriesByClassRole.get(e.klass)[e.role].push(e);
+  }
+  return { entries, sumByClassRole, entriesByClassRole };
+}
+
+function renderPreviousStatsUI() {
+  const root = previousStatsUIRoot;
+  if (!root) return;
+  const emps = parseEmployees(employeesInput.value);
+  const table = document.createElement('table');
+  table.className = 'report-table';
+  const thead = document.createElement('thead');
+  const thr = document.createElement('tr');
+  ['이름', '병당', '응당', 'Day-off'].forEach((h) => { const th = document.createElement('th'); th.textContent = h; thr.appendChild(th); });
+  thead.appendChild(thr); table.appendChild(thead);
+  const tbody = document.createElement('tbody');
+  const opts = [0, +1, +2, +3, +4, +5, -1, -2, -3, -4, -5];
+  for (const e of emps) {
+    const tr = document.createElement('tr'); tr.setAttribute('data-name', e.name);
+    const nameTd = document.createElement('td'); nameTd.textContent = `${e.name} (${e.klass || '-'})`; tr.appendChild(nameTd);
+    for (const role of ['byung','eung','off']) {
+      const td = document.createElement('td'); td.classList.add('num');
+      const input = document.createElement('input');
+      input.type = 'number'; input.min = '-5'; input.max = '5'; input.step = '1'; input.value = '0';
+      input.setAttribute('data-role', role);
+      td.appendChild(input); tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+  root.innerHTML = '';
+  root.appendChild(table);
+}
+
+function debounce(fn, ms) {
+  let t = null;
+  return (...args) => { clearTimeout(t); t = setTimeout(() => fn.apply(null, args), ms); };
+}
+
+// 대한민국 공휴일 로더 (Nager.Date API 사용, 병합)
+async function loadKRHolidays({ merge = true } = {}) {
+  try {
+    const rng = currentDateRange();
+    const years = yearsInRange();
+    if (years.size === 0 || !rng) {
+      alert('시작일/종료일 또는 주 수를 먼저 지정해주세요.');
+      return;
+    }
+    setLoading(true, '공휴일 불러오는 중…');
+    const fetched = new Set();
+    for (const y of years) {
+      try {
+        const res = await fetch(`https://date.nager.at/api/v3/PublicHolidays/${y}/KR`);
+        if (!res.ok) throw new Error('fetch failed');
+        const data = await res.json();
+        for (const it of data) {
+          if (!it?.date) continue;
+          const d = new Date(it.date);
+          if (!Number.isNaN(d.getTime()) && d >= rng.start && d <= rng.end) fetched.add(String(it.date));
+        }
+      } catch (e) {
+        // 네트워크 실패 시 고정일 공휴일만 보정
+        for (const day of fixedKRHolidays(y)) {
+          const d = new Date(day);
+          if (!Number.isNaN(d.getTime()) && d >= rng.start && d <= rng.end) fetched.add(day);
+        }
+      }
+    }
+    const { add: curAdd, remove: curRemove } = parseHolidayAddsRemoves(holidaysInput.value);
+    const base = merge ? new Set([...curAdd, ...fetched]) : new Set([...fetched]);
+    for (const d of curRemove) base.delete(d);
+    const list = [...base].sort();
+    holidaysInput.value = list.join('\n');
+  } catch (e) {
+    console.error(e);
+    alert('공휴일 불러오기에 실패했습니다.');
+  } finally { setLoading(false); }
+}
+
+function yearsInRange() {
+  const s = startInput.value;
+  const e = endInput.value;
+  let start = s ? new Date(s) : null;
+  let end = e ? new Date(e) : null;
+  if (!start) return new Set();
+  if (!end) {
+    const weeks = Math.max(1, Math.min(8, Number(weeksInput.value || 4)));
+    end = addDays(new Date(start), weeks * 7 - 1);
+  }
+  const ys = new Set();
+  const y1 = start.getFullYear(); const y2 = end.getFullYear();
+  for (let y = Math.min(y1, y2); y <= Math.max(y1, y2); y += 1) ys.add(y);
+  return ys;
+}
+
+function currentDateRange() {
+  const s = startInput.value;
+  const e = endInput.value;
+  if (!s) return null;
+  const start = new Date(s);
+  let end;
+  if (e) end = new Date(e); else {
+    const weeks = Math.max(1, Math.min(8, Number(weeksInput.value || 4)));
+    end = addDays(new Date(start), weeks * 7 - 1);
+  }
+  return { start, end };
+}
+
+function fixedKRHolidays(year) {
+  // 네트워크 실패 시 최소한의 고정일 공휴일 제공
+  const mk = (m, d) => `${year}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+  return new Set([
+    mk(1,1),   // 신정
+    mk(3,1),   // 삼일절
+    mk(5,5),   // 어린이날
+    mk(6,6),   // 현충일
+    mk(8,15),  // 광복절
+    mk(10,3),  // 개천절
+    mk(10,9),  // 한글날
+    mk(12,25), // 성탄절
+  ]);
+}
+
+function renderPersonalStats(result) {
+  const wrap = document.createElement('div');
+  wrap.className = 'weekly-report section-card';
+  const title = document.createElement('div');
+  title.className = 'legend title';
+  title.textContent = '개인별 수련시간 및 Day-off 통계 (연차 내)';
+  wrap.appendChild(title);
+
+  const empById = new Map(result.employees.map((e) => [e.id, e]));
+  // Compute day-off counts from schedule (정의: 전날 당직이고 오늘이 평일이면 Day-off 1)
+  const dayOff = new Map();
+  // Role counts per person
+  const byungCount = new Map();
+  const eungCount = new Map();
+
+  const holidays = new Set(result.holidays || []);
+  const isWorkdayLocal = (date) => {
+    const d = new Date(date);
+    const key = fmtDate(d);
+    const wd = d.getDay();
+    return wd >= 1 && wd <= 5 && !holidays.has(key);
+  };
+
+  for (let i = 0; i < result.schedule.length; i += 1) {
+    const cell = result.schedule[i];
+    const next = result.schedule[i + 1];
+    if (!next) continue;
+    const isNextWk = isWorkdayLocal(next.date);
+    const dutyIds = (cell.duties || []).map((d) => d.id);
+    if (cell.duties && cell.duties.length) {
+      const b = cell.duties[0]; if (b) byungCount.set(b.id, (byungCount.get(b.id) || 0) + 1);
+      const e = cell.duties[1]; if (e) eungCount.set(e.id, (eungCount.get(e.id) || 0) + 1);
+    }
+    if (isNextWk) { for (const id of dutyIds) dayOff.set(id, (dayOff.get(id) || 0) + 1); }
+  }
+
+  const groups = new Map();
+  for (const s of result.stats) {
+    const emp = empById.get(s.id) || {};
+    const k = emp.klass || '기타';
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(s);
+  }
+  const order = ['R1','R2','R3','R4','기타'];
+  for (const klass of order) {
+    if (!groups.has(klass)) continue;
+    const header = document.createElement('div');
+    header.className = 'legend';
+    header.textContent = `연차: ${klass}`;
+    wrap.appendChild(header);
+
+    const table = document.createElement('table');
+    table.className = 'report-table';
+    const thead = document.createElement('thead');
+    const thr = document.createElement('tr');
+    const hdrs = ['이름', '병당(회)', '응당(회)', '총 당직(회)', 'Day-off', '당직시간(h)', '총근무시간(h)'];
+    for (const h of hdrs) { const th = document.createElement('th'); th.textContent = h; thr.appendChild(th); }
+    thead.appendChild(thr); table.appendChild(thead);
+    const tbody = document.createElement('tbody');
+    for (const s of groups.get(klass)) {
+      const emp = empById.get(s.id) || {};
+      const offW = dayOff.get(s.id) || 0;
+      const tr = document.createElement('tr');
+      const cells = [
+        s.name,
+        String(byungCount.get(s.id) || 0),
+        String(eungCount.get(s.id) || 0),
+        String((byungCount.get(s.id) || 0) + (eungCount.get(s.id) || 0)),
+        String(offW),
+        (s.dutyHours).toFixed(1),
+        (s.totalHours).toFixed(1),
+      ];
+      cells.forEach((val, idx) => {
+        const td = document.createElement('td');
+        td.textContent = String(val);
+        if (idx >= 1) td.classList.add('num');
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    }
+    table.appendChild(tbody);
+    wrap.appendChild(table);
+  }
+  report.appendChild(wrap);
 }

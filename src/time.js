@@ -39,3 +39,30 @@ export function weekKey(date) {
 export function nextDayKey(date) {
   return fmtDate(addDays(date, 1));
 }
+
+export function daysDiff(a, b) {
+  const A = new Date(a.getFullYear(), a.getMonth(), a.getDate());
+  const B = new Date(b.getFullYear(), b.getMonth(), b.getDate());
+  return Math.round((B - A) / (1000 * 60 * 60 * 24));
+}
+
+export function weekKeyByMode(date, startDate, mode = 'calendar') {
+  if (mode === 'start') {
+    const d = new Date(date);
+    const s = new Date(startDate);
+    const diff = daysDiff(s, d);
+    const chunkStart = addDays(s, Math.floor(diff / 7) * 7);
+    return fmtDate(chunkStart);
+  }
+  return weekKey(date);
+}
+
+export function allWeekKeysInRange(startDate, totalDays, mode = 'calendar') {
+  const start = new Date(startDate);
+  const keys = new Set();
+  for (let i = 0; i < totalDays; i += 1) {
+    const d = addDays(start, i);
+    keys.add(weekKeyByMode(d, start, mode));
+  }
+  return [...keys];
+}
