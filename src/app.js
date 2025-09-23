@@ -137,15 +137,15 @@ function onGenerate() {
         const budgetMs = getTimeBudgetMsFromQuery();
         const weekMode = 'calendar';
         const weekdaySlots = 2; // 병당 1 + 응당 1
-        const vacations = parseVacations(vacationsInput.value, (d) => weekKey(new Date(d)));
-        let result = generateSchedule({ startDate, endDate, weeks, weekMode, employees, holidays, unavailableByName: Object.fromEntries(unavailable), vacationWeeksByName: Object.fromEntries(vacations), optimization, weekdaySlots, weekendSlots: 2, timeBudgetMs: budgetMs });
+        const vacations = parseVacationRanges(vacationsInput.value);
+        let result = generateSchedule({ startDate, endDate, weeks, weekMode, employees, holidays, unavailableByName: Object.fromEntries(unavailable), vacationDaysByName: Object.fromEntries(vacations), optimization, weekdaySlots, weekendSlots: 2, timeBudgetMs: budgetMs });
         // 자동 재시도: 주 70h 초과가 있으면 최대 5회까지 재시도
         let best = result;
         let bestEx = countSoftExceed(result, 70);
         if (bestEx > 0) {
           for (let i = 1; i <= 5; i += 1) {
             setLoading(true, `당직표 생성 중… (재시도 ${i}/5)`);
-            const cand = generateSchedule({ startDate, endDate, weeks, weekMode, employees, holidays, unavailableByName: Object.fromEntries(unavailable), vacationWeeksByName: Object.fromEntries(vacations), optimization, weekdaySlots, weekendSlots: 2, timeBudgetMs: budgetMs });
+            const cand = generateSchedule({ startDate, endDate, weeks, weekMode, employees, holidays, unavailableByName: Object.fromEntries(unavailable), vacationDaysByName: Object.fromEntries(vacations), optimization, weekdaySlots, weekendSlots: 2, timeBudgetMs: budgetMs });
             const ex = countSoftExceed(cand, 70);
             if (ex === 0) { best = cand; bestEx = 0; break; }
             if (ex < bestEx) { best = cand; bestEx = ex; }
@@ -813,10 +813,11 @@ function countSoftExceed(result, limit = 72) {
   } catch { return 0; }
 }
 
-function parseVacations(text, weekKeyFn = (d) => weekKey(new Date(d))) {
-  // 형식: 이름: YYYY-MM-DD, YYYY-MM-DD ...  (각 날짜가 속한 주 전체 휴가)
+function parseVacationRanges(text) {
+  // 형식: 이름: YYYY-MM-DD~YYYY-MM-DD[, YYYY-MM-DD~YYYY-MM-DD]
+  // 단일 날짜도 허용: YYYY-MM-DD (그 하루만 제외)
   const map = new Map();
-  const lines = text.split(/\r?\n/);
+  const lines = String(text || '').split(/\r?\n/);
   for (const raw of lines) {
     const line = raw.trim();
     if (!line) continue;
@@ -824,10 +825,21 @@ function parseVacations(text, weekKeyFn = (d) => weekKey(new Date(d))) {
     if (!m) continue;
     const name = m[1].trim();
     const rest = m[2];
-    const dates = (rest.match(/\d{4}-\d{2}-\d{2}/g) || []).map((d) => d.trim());
+    const ranges = rest.split(/[ ,|\t]+/).filter(Boolean);
     if (!map.has(name)) map.set(name, new Set());
     const set = map.get(name);
-    for (const d of dates) set.add(weekKeyFn(d));
+    for (const token of ranges) {
+      const mm = token.match(/^(\d{4}-\d{2}-\d{2})\s*[~\-–—]?\s*(\d{4}-\d{2}-\d{2})?$/);
+      if (!mm) continue;
+      const s = new Date(mm[1]);
+      const e = mm[2] ? new Date(mm[2]) : new Date(mm[1]);
+      if (Number.isNaN(s.getTime()) || Number.isNaN(e.getTime())) continue;
+      const start = s < e ? s : e;
+      const end = s < e ? e : s;
+      for (let d = new Date(start); d <= end; d = addDays(d, 1)) {
+        set.add(fmtDate(d));
+      }
+    }
   }
   return map;
 }

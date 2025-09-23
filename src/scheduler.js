@@ -10,7 +10,7 @@ import { addDays, isWorkday, weekKey, fmtDate, rangeDays, weekKeyByMode, allWeek
 
 // preference: 'any' | 'weekday' | 'weekend'
 // optimization: 'off' | 'fast' | 'medium' | 'strong'
-export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMode = 'calendar', employees, holidays = [], unavailableByName = {}, vacationWeeksByName = {}, optimization = 'medium', weekdaySlots = 1, weekendSlots = 2, timeBudgetMs = 2000 }) {
+export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMode = 'calendar', employees, holidays = [], unavailableByName = {}, vacationDaysByName = {}, optimization = 'medium', weekdaySlots = 1, weekendSlots = 2, timeBudgetMs = 2000 }) {
   if (!employees || employees.length < 2) {
     throw new Error('근무자는 2명 이상 필요합니다.');
   }
@@ -54,7 +54,7 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
     offDayKeys: new Set(), // 24h 당직 다음날: 당직/정규 제외
     regularOffDayKeys: new Set(), // 평일 당직 다음날: 정규 제외
     unavailable: new Set(unavailableByName[(typeof emp === 'string' ? emp : emp.name)] || []),
-    vacationWeeks: new Set(vacationWeeksByName[(typeof emp === 'string' ? emp : emp.name)] || []),
+    vacationDays: new Set(vacationDaysByName[(typeof emp === 'string' ? emp : emp.name)] || []),
   }));
 
   // 날짜 키 ↔ 인덱스 매핑
@@ -74,10 +74,9 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
     }
   }
 
-  // 개인별 총합 상한(휴가 주 제외) 계산 (스케줄링 전에 필요)
+  // 개인별 총합 상한: 전체 주 기준(휴가 중 정규 제외되므로 실제 총합은 자연히 줄어듦)
   for (const p of people) {
-    const effectiveWeeks = weekKeys.filter((wk) => !p.vacationWeeks.has(wk)).length;
-    p.totalCapHours = 72 * effectiveWeeks;
+    p.totalCapHours = 72 * weekKeys.length;
   }
 
   // 결과 구조
@@ -271,7 +270,7 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
     pool = afterUnavail;
 
     const afterVacation = [];
-    for (const p of pool) ((p.vacationWeeks && p.vacationWeeks.has(wk)) ? stage.vacation : afterVacation).push(p);
+    for (const p of pool) ((p.vacationDays && p.vacationDays.has(todayKey)) ? stage.vacation : afterVacation).push(p);
     pool = afterVacation;
 
     // 소아턴(R3) 수요일 제외 규칙
@@ -502,7 +501,7 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
           if (p.klass !== needK) return { valid: false };
           if (p.offDayKeys.has(todayKey)) return { valid: false };
           if (p.unavailable && p.unavailable.has(todayKey)) return { valid: false };
-          if (p.vacationWeeks && p.vacationWeeks.has(wk)) return { valid: false };
+          if (p.vacationDays && p.vacationDays.has(fmtDate(date))) return { valid: false };
           // 소아턴(R3) 수요일 제외
           if (date.getDay() === 3 && p.klass === 'R3' && p.pediatric) return { valid: false };
           // 전일 당직자는 오늘 당직 불가 (연속 금지)
@@ -540,7 +539,7 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
         const wk = weekKeyByMode(date, start, weekMode);
         const key = fmtDate(date);
         const pool = sim
-          .filter((p) => !(p.vacationWeeks && p.vacationWeeks.has(wk)))
+          .filter((p) => !(p.vacationDays && p.vacationDays.has(fmtDate(date))))
           .filter((p) => !(p.regularOffDayKeys && p.regularOffDayKeys.has(key)))
           .filter((p) => !(p.offDayKeys && p.offDayKeys.has(key)))
           .filter((p) => !(p.unavailable && p.unavailable.has(key)));
@@ -616,7 +615,7 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
           }
         }
       }
-      const WEIGHTS = { total: 0.0, smooth: 0.0, countClass: 6.0, roleClass: 3.0, hoursClass: 0.2, weeklyClass: 0.5, softCnt: 2.0, softAmt: 0.5, preferMiss: 1.5 };
+      const WEIGHTS = { total: 0.0, smooth: 0.0, countClass: 9.0, roleClass: 3.0, hoursClass: 0.2, weeklyClass: 0.5, softCnt: 2.0, softAmt: 0.5, preferMiss: 1.5 };
       const objective = WEIGHTS.total * varTotal
         + WEIGHTS.smooth * smooth
         + WEIGHTS.countClass * countClassVar
@@ -680,7 +679,7 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
       if (!isWorkday(d, holidaySet)) { cell.regulars = []; continue; }
       const wk = weekKeyByMode(d, start, weekMode); const key = fmtDate(d);
       const pool = people
-        .filter((p) => !(p.vacationWeeks && p.vacationWeeks.has(wk)))
+        .filter((p) => !(p.vacationDays && p.vacationDays.has(key)))
         .filter((p) => !(p.regularOffDayKeys && p.regularOffDayKeys.has(key)))
         .filter((p) => !(p.offDayKeys && p.offDayKeys.has(key)))
         .filter((p) => !(p.unavailable && p.unavailable.has(key)));
