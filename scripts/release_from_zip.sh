@@ -16,8 +16,8 @@ if [[ -z "$ZIP_PATH" || ! -f "$ZIP_PATH" ]]; then
 fi
 
 BN=$(basename "$ZIP_PATH")
-if [[ ! "$BN" =~ ([0-9]{4}-[0-9]{2})-(v[0-9]+) ]]; then
-  echo "Filename must contain YYYY-MM-vN (e.g., duty-roster-2025-10-v3.zip)" >&2
+if [[ ! "$BN" =~ ([0-9]{4}-[0-9]{2})-(v[0-9A-Za-z._-]+) ]]; then
+  echo "Filename must contain YYYY-MM-vN (e.g., duty-roster-2025-10-v3.zip or v3a)" >&2
   exit 3
 fi
 MONTH="${BASH_REMATCH[1]}"
@@ -42,4 +42,3 @@ gh release create "$TAG" "$ZIP_PATH" ${XLS_PATH:+"$XLS_PATH"} \
   --target main
 
 echo "Published: $TAG"
-
