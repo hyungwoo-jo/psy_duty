@@ -80,17 +80,32 @@
 - 사람별 URL 공유(추천): 각 사람의 .ics 파일을 페이지에 호스팅해 ‘URL로 캘린더 추가(구독)’를 안내합니다. 일정이 바뀌면 파일만 교체하면 모두 자동 반영됩니다.
 
 ### 사람별 URL을 만드는 방법(정적 Pages 기준)
-1) 앱에서 JSON 내보내기로 `duty-roster.json` 저장
-2) 아래 스크립트로 사람별 ICS 생성
-   - 버전 디렉토리 권장: `scripts/release_ics.sh --month 2025-01 --version v3 --json duty-roster.json --set-latest`
-   - 수동으로 하려면: `python3 scripts/build_ics.py duty-roster.json -o public/ics/2025-01/v3`
+1) 앱에서 ‘ICS 내보내기’를 눌러 ZIP을 받습니다(또는 고급: JSON 내보내기 사용 시 `duty-roster.json`).
+2) 아래 스크립트로 사람별 ICS 생성 및 배포 커밋
+   - ZIP 사용: `scripts/release_ics.sh --month 2025-01 --version v3 --ics-zip duty-roster-ics.zip --set-latest`
+   - 디렉토리 사용: `scripts/release_ics.sh --month 2025-01 --version v3 --ics-dir path/to/unzipped --set-latest`
+   - (고급) JSON 사용: `scripts/release_ics.sh --month 2025-01 --version v3 --json duty-roster.json --set-latest`
 3) `public/ics/2025-01` 경로를 리포지토리에 포함시키고 배포(`scripts/deploy.sh`)
-4) 사용자에게 URL 제공:
-   - 예시: `https://<OWNER>.github.io/psy_duty/ics/2025-01/홍길동.ics`
+4) 사용자에게 URL 제공(버전 포함):
+   - 예시: `https://<OWNER>.github.io/psy_duty/ics/2025-01/v3/홍길동.ics`
    - Google 캘린더의 ‘URL로 캘린더 추가’에 위 주소를 입력(https 또는 webcal로 시작 가능)
-5) 앱에서 ‘ICS 링크 기본 경로’를 버전 포함 경로로 설정하고(예: `https://<OWNER>.github.io/psy_duty/ics/2025-01/v3/`) Excel을 내보내면, ‘ICS Links’ 시트의 링크가 정상 동작합니다.
+5) 앱에서 ‘ICS 링크 기본 경로’를 버전 포함 경로로 설정(예: `https://<OWNER>.github.io/psy_duty/ics/2025-01/v3/`)하고 Excel을 내보내면, ‘ICS Links’ 시트의 링크가 정상 동작합니다.
 
 TIP: GitHub Pages에서 열람 중이면 앱이 기본 경로를 자동 제안합니다(예: `https://<OWNER>.github.io/psy_duty/ics/YYYY-MM/`).
+
+### 완전 자동 배포(GitHub Actions · 추천)
+브라우저만으로 끝내고 싶다면 GitHub Release 이벤트로 자동 배포하세요.
+
+- 요약: 새 Release를 만들고 ZIP(.ics 묶음)을 첨부하면, Actions가 자동으로 `public/ics/YYYY-MM/vN/`에 전개/커밋/푸시합니다.
+- 규칙: Release 태그는 `ics-YYYY-MM-vN` 형식이어야 합니다(예: `ics-2025-10-v3`). Release 자산의 첫 번째 .zip을 사용합니다.
+- 절차:
+  1) 앱에서 ‘ICS 내보내기’로 ZIP 다운로드
+  2) GitHub → Releases → New release
+     - Tag: `ics-2025-10-v3` (예)
+     - Attach binaries: ZIP 업로드 → Publish
+  3) 자동 배포 후 공유:
+     - 버전 고정: `https://<OWNER>.github.io/psy_duty/ics/2025-10/v3/이름.ics`
+     - 월 인덱스: `https://<OWNER>.github.io/psy_duty/ics/2025-10/` (해당 vN으로 자동 리다이렉트)
 
 ### 재생성/수정 시 덮어쓰기 방지 전략(중요)
 - 버전 디렉토리 사용: 월별 디렉토리 아래에 `v1`, `v2`, `v3`처럼 버전 하위 디렉토리를 두고, 확정판만 공유합니다.

@@ -1,0 +1,99 @@
+name: Release ICS to Pages
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Parse tag to month/version
+        id: parse
+        run: |
+          TAG="${{ github.event.release.tag_name }}"
+          # Expect tags like: ics-YYYY-MM-vN (e.g., ics-2025-10-v3)
+          if [[ "$TAG" =~ ^ics-([0-9]{4}-[0-9]{2})-(v[0-9]+)$ ]]; then
+            echo "month=${BASH_REMATCH[1]}" >> $GITHUB_OUTPUT
+            echo "version=${BASH_REMATCH[2]}" >> $GITHUB_OUTPUT
+          else
+            echo "Unsupported tag format: $TAG" >&2
+            exit 2
+          fi
+
+      - name: Find ICS ZIP asset
+        id: asset
+        env:
+          RELEASE_ID: ${{ github.event.release.id }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Pick the first .zip asset
+          ASSET_ID=$(gh api repos/${{ github.repository }}/releases/$RELEASE_ID/assets --jq 
+            'map(select(.name | test("\\.zip$"))) | .[0].id // empty')
+          ASSET_NAME=$(gh api repos/${{ github.repository }}/releases/$RELEASE_ID/assets --jq 
+            'map(select(.name | test("\\.zip$"))) | .[0].name // empty')
+          if [[ -z "$ASSET_ID" ]]; then
+            echo "No .zip asset found on this release. Upload ICS ZIP and republish." >&2
+            exit 3
+          fi
+          echo "asset_id=$ASSET_ID" >> $GITHUB_OUTPUT
+          echo "asset_name=$ASSET_NAME" >> $GITHUB_OUTPUT
+
+      - name: Download asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          URL=$(gh api repos/${{ github.repository }}/releases/assets/${{ steps.asset.outputs.asset_id }} -H 'Accept: application/octet-stream' --jq '.url')
+          curl -L -H "Authorization: token $GH_TOKEN" -H "Accept: application/octet-stream" "$URL" -o ics.zip
+          ls -l ics.zip
+
+      - name: Unzip to versioned folder
+        run: |
+          set -euo pipefail
+          OUT_DIR="public/ics/${{ steps.parse.outputs.month }}/${{ steps.parse.outputs.version }}"
+          test -d "$OUT_DIR" && { echo "Target exists: $OUT_DIR" >&2; exit 4; } || true
+          mkdir -p "$OUT_DIR"
+          unzip -o ics.zip -d "$OUT_DIR"
+          # Build simple index.html
+          {
+            echo '<!doctype html>'
+            echo '<meta charset="utf-8">'
+            echo "<title>ICS ${{ steps.parse.outputs.month }} ${{ steps.parse.outputs.version }}</title>"
+            echo '<style>body{font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial;max-width:800px;margin:20px auto;padding:0 12px} a{color:#0366d6;text-decoration:none} ul{line-height:1.9} code{background:#f6f8fa;padding:2px 4px;border-radius:4px}</style>'
+            echo "<h1>ICS ${{ steps.parse.outputs.month }} ${{ steps.parse.outputs.version }}</h1>"
+            echo '<ul>'
+            for f in "$OUT_DIR"/*.ics; do
+              bn=$(basename "$f")
+              esc=$(printf '%s' "$bn" | sed 's/&/&amp;/g; s/</&lt;/g; s/>/&gt;/g')
+              echo "<li><a href=\"./$esc\">$esc</a></li>"
+            done
+            echo '</ul>'
+          } >"$OUT_DIR/index.html"
+          # Update month redirect to latest (this release)
+          MONTH_DIR="public/ics/${{ steps.parse.outputs.month }}"
+          mkdir -p "$MONTH_DIR"
+          printf '%s\n' '<!doctype html>' '<meta charset="utf-8">' \
+            "<meta http-equiv=\"refresh\" content=\"0; url=./${{ steps.parse.outputs.version }}/\">" \
+            "<title>${{ steps.parse.outputs.month }} ICS redirect</title>" \
+            "<p>Redirecting to ${{ steps.parse.outputs.version }} … <a href=\"./${{ steps.parse.outputs.version }}/\">click here</a></p>" \
+            >"$MONTH_DIR/index.html"
+
+      - name: Commit and push
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add -A public/ics
+          git commit -m "ci(release): publish ${{ steps.parse.outputs.month }} ${{ steps.parse.outputs.version }} from release asset ${{ steps.asset.outputs.asset_name }}" || true
+          git push origin HEAD:${{ github.ref_name == 'refs/heads/main' && 'main' || 'main' }}
+
