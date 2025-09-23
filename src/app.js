@@ -9,6 +9,7 @@ const generateBtn = document.querySelector('#generate');
 const exportJsonBtn = document.querySelector('#export-json');
 const exportCsvBtn = document.querySelector('#export-csv');
 const exportXlsxBtn = document.querySelector('#export-xlsx');
+const exportIcsBtn = document.querySelector('#export-ics');
 const messages = document.querySelector('#messages');
 const summary = document.querySelector('#summary');
 const report = document.querySelector('#report');
@@ -30,6 +31,7 @@ generateBtn.addEventListener('click', onGenerate);
 exportJsonBtn.addEventListener('click', onExportJson);
 exportCsvBtn.addEventListener('click', onExportCsv);
 exportXlsxBtn?.addEventListener('click', onExportXlsx);
+exportIcsBtn?.addEventListener('click', onExportIcs);
 // 직원 목록 변경 시 보정 UI 갱신
 employeesInput.addEventListener('input', debounce(renderPreviousStatsUI, 250));
 window.addEventListener('DOMContentLoaded', renderPreviousStatsUI);
@@ -147,6 +149,7 @@ function onGenerate() {
         exportJsonBtn.disabled = false;
         exportCsvBtn.disabled = false;
         if (exportXlsxBtn) exportXlsxBtn.disabled = false;
+        if (exportIcsBtn) exportIcsBtn.disabled = false;
 
         if (bestEx > 0) {
           const warnMsg = `주의: 일부 주의 70h 초과가 해소되지 않았습니다 (셀 ${bestEx}개). 설정을 조정하거나 인원을 늘려주세요.`;
@@ -169,6 +172,7 @@ function onGenerate() {
         exportJsonBtn.disabled = true;
         exportCsvBtn.disabled = true;
         if (exportXlsxBtn) exportXlsxBtn.disabled = true;
+        if (exportIcsBtn) exportIcsBtn.disabled = true;
       } finally {
         setLoading(false);
         disableActions(false);
@@ -182,6 +186,7 @@ function onGenerate() {
     exportJsonBtn.disabled = true;
     exportCsvBtn.disabled = true;
     if (exportXlsxBtn) exportXlsxBtn.disabled = true;
+    if (exportIcsBtn) exportIcsBtn.disabled = true;
   }
 }
 
@@ -346,6 +351,23 @@ function onExportXlsx() {
   download('duty-roster.xls', xml);
 }
 
+function onExportIcs() {
+  if (!lastResult) return;
+  const emps = lastResult.employees || [];
+  const files = [];
+  for (const e of emps) {
+    const name = e.name;
+    if (!hasDutiesFor(lastResult, name)) continue; // 당직 없음 스킵
+    const icsText = buildICS(lastResult, { nameFilter: name, includeBack: false });
+    const bytes = new TextEncoder().encode(icsText);
+    const fname = safePersonFilename(name);
+    files.push({ name: `${fname}.ics`, bytes });
+  }
+  if (files.length === 0) return;
+  const zip = buildZip(files);
+  download('duty-roster-ics.zip', zip);
+}
+
 function csvEscape(s) {
   const v = String(s);
   if (/[",\n]/.test(v)) return '"' + v.replaceAll('"', '""') + '"';
@@ -354,14 +376,22 @@ function csvEscape(s) {
 
 function download(filename, content) {
   const isXls = filename.toLowerCase().endsWith('.xls');
-  const type = isXls ? 'application/vnd.ms-excel;charset=utf-8' : 'text/plain;charset=utf-8';
-  const blob = new Blob([content], { type });
+  const isIcs = filename.toLowerCase().endsWith('.ics');
+  const isZip = filename.toLowerCase().endsWith('.zip');
+  const type = isXls
+    ? 'application/vnd.ms-excel;charset=utf-8'
+    : (isIcs ? 'text/calendar;charset=utf-8' : (isZip ? 'application/zip' : 'text/plain;charset=utf-8'));
+  const blob = new Blob([content instanceof Uint8Array ? content : String(content)], { type });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
   a.download = filename;
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function sanitizeFilename(s) {
+  return String(s).replace(/[^\w\-\.가-힣]+/g, '_');
 }
 
 function xmlEscape(s) {
@@ -400,6 +430,215 @@ function sheetXML(name, rows) {
     return `<Row>${cells}</Row>`;
   }).join('');
   return `<Worksheet ss:Name=\"${safe}\"><Table>${rs}</Table></Worksheet>`;
+}
+
+function buildICS(result, opts = {}) {
+  const nameFilter = (opts && opts.nameFilter) || null;
+  const includeBack = !!(opts && opts.includeBack);
+  const lines = [];
+  const now = new Date();
+  const dtstamp = icsDateTimeUTC(now);
+  const calName = nameFilter ? `Psy Duty (${nameFilter})` : 'Psy Duty Roster';
+  lines.push('BEGIN:VCALENDAR');
+  lines.push('VERSION:2.0');
+  lines.push('CALSCALE:GREGORIAN');
+  lines.push('PRODID:-//psy_duty//Duty Roster//KO');
+  lines.push('METHOD:PUBLISH');
+  lines.push('X-WR-CALNAME:' + icsText(calName));
+
+  const holidaySet = new Set(result.holidays || []);
+  const pushEvent = (dateObj, title, uidSeed, description = '') => {
+    const d0 = icsDate(dateObj);
+    const d1 = icsDate(addDays(dateObj, 1)); // all-day end exclusive
+    const uid = `${uidSeed}@psy_duty`;
+    lines.push('BEGIN:VEVENT');
+    lines.push('UID:' + uid);
+    lines.push('DTSTAMP:' + dtstamp);
+    lines.push('DTSTART;VALUE=DATE:' + d0);
+    lines.push('DTEND;VALUE=DATE:' + d1);
+    lines.push('SUMMARY:' + icsText(title));
+    if (description) lines.push('DESCRIPTION:' + icsText(description));
+    lines.push('END:VEVENT');
+  };
+
+  for (const day of result.schedule) {
+    const dateObj = new Date(day.date);
+    const key = fmtDate(dateObj);
+    const isHoliday = holidaySet.has(key);
+    const wd = dateObj.getDay();
+    const isWeekend = (wd === 0 || wd === 6);
+    const dayNote = isHoliday ? '공휴일' : (isWeekend ? '주말' : '평일');
+    const roles = ['병당', '응당'];
+    // Duties
+    for (let i = 0; i < (day.duties || []).length; i += 1) {
+      const duty = day.duties[i];
+      if (!duty) continue;
+      if (nameFilter && duty.name !== nameFilter) continue;
+      const role = roles[i] || `슬롯${i + 1}`;
+      const title = `${role} - ${duty.name}`;
+      const desc = `${key} ${dayNote}`;
+      pushEvent(dateObj, title, `duty-${key}-${i}-${duty.id}`, desc);
+    }
+    // Emergency back (옵션) — 기본적으로 미포함
+    if (includeBack && day.back) {
+      if (!nameFilter || day.back.name === nameFilter) {
+        const title = `응급 back - ${day.back.name}`;
+        const desc = `${key} ${dayNote}`;
+        pushEvent(dateObj, title, `back-${key}-${day.back.id}`, desc);
+      }
+    }
+  }
+
+  lines.push('END:VCALENDAR');
+  return lines.join('\r\n');
+}
+
+function icsDate(d) {
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}${mm}${dd}`;
+}
+
+function icsDateTimeUTC(d) {
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(d.getUTCDate()).padStart(2, '0');
+  const hh = String(d.getUTCHours()).padStart(2, '0');
+  const mm = String(d.getUTCMinutes()).padStart(2, '0');
+  const ss = String(d.getUTCSeconds()).padStart(2, '0');
+  return `${y}${m}${day}T${hh}${mm}${ss}Z`;
+}
+
+function icsText(s) {
+  return String(s)
+    .replace(/\\/g, '\\\\')
+    .replace(/\n/g, '\\n')
+    .replace(/,/g, '\\,')
+    .replace(/;/g, '\\;');
+}
+
+function hasDutiesFor(result, name) {
+  for (const day of result.schedule || []) {
+    const duties = day.duties || [];
+    for (const d of duties) { if (d && d.name === name) return true; }
+  }
+  return false;
+}
+
+function safePersonFilename(name) {
+  // 최소한의 안전 처리: 경로 구분자만 제거
+  return String(name).replace(/[\\/]+/g, '_');
+}
+
+// ZIP(Stored) 최소 구현: UTF-8 파일명, 무압축
+function buildZip(files) {
+  // files: [{ name: string, bytes: Uint8Array }]
+  const chunks = [];
+  const central = [];
+  let offset = 0;
+  const now = new Date();
+  const dosTime = toDosTime(now);
+  const dosDate = toDosDate(now);
+
+  for (const f of files) {
+    const nameBytes = new TextEncoder().encode(f.name);
+    const data = f.bytes;
+    const crc = crc32(data);
+    const localHeader = [];
+    pushU32(localHeader, 0x04034b50);
+    pushU16(localHeader, 20);            // version needed to extract
+    pushU16(localHeader, 0x0800);        // general purpose bit flag (UTF-8)
+    pushU16(localHeader, 0);             // compression method (0=store)
+    pushU16(localHeader, dosTime);
+    pushU16(localHeader, dosDate);
+    pushU32(localHeader, crc >>> 0);
+    pushU32(localHeader, data.length >>> 0);
+    pushU32(localHeader, data.length >>> 0);
+    pushU16(localHeader, nameBytes.length);
+    pushU16(localHeader, 0);             // extra length
+    const local = concatBytes(new Uint8Array(localHeader), nameBytes, data);
+    chunks.push(local);
+
+    // central directory header
+    const cd = [];
+    pushU32(cd, 0x02014b50);
+    pushU16(cd, 20);        // version made by
+    pushU16(cd, 20);        // version needed
+    pushU16(cd, 0x0800);    // UTF-8
+    pushU16(cd, 0);         // method
+    pushU16(cd, dosTime);
+    pushU16(cd, dosDate);
+    pushU32(cd, crc >>> 0);
+    pushU32(cd, data.length >>> 0);
+    pushU32(cd, data.length >>> 0);
+    pushU16(cd, nameBytes.length);
+    pushU16(cd, 0);         // extra length
+    pushU16(cd, 0);         // comment length
+    pushU16(cd, 0);         // disk number start
+    pushU16(cd, 0);         // internal attrs
+    pushU32(cd, 0);         // external attrs
+    pushU32(cd, offset >>> 0);
+    const cdr = concatBytes(new Uint8Array(cd), nameBytes);
+    central.push(cdr);
+
+    offset += local.length;
+  }
+
+  const centralDir = concatBytes(...central);
+  const eocd = [];
+  pushU32(eocd, 0x06054b50);
+  pushU16(eocd, 0); // disk
+  pushU16(eocd, 0); // disk
+  pushU16(eocd, files.length); // entries on this disk
+  pushU16(eocd, files.length); // total entries
+  pushU32(eocd, centralDir.length);
+  pushU32(eocd, offset);
+  pushU16(eocd, 0); // comment length
+  const tail = new Uint8Array(eocd);
+
+  return concatBytes(...chunks, centralDir, tail);
+}
+
+function toDosTime(date) {
+  const h = date.getHours();
+  const m = date.getMinutes();
+  const s = Math.floor(date.getSeconds() / 2);
+  return ((h & 0x1f) << 11) | ((m & 0x3f) << 5) | (s & 0x1f);
+}
+function toDosDate(date) {
+  const y = date.getFullYear() - 1980;
+  const mo = date.getMonth() + 1;
+  const d = date.getDate();
+  return ((y & 0x7f) << 9) | ((mo & 0x0f) << 5) | (d & 0x1f);
+}
+
+function pushU16(arr, v) { arr.push(v & 0xff, (v >>> 8) & 0xff); }
+function pushU32(arr, v) { arr.push(v & 0xff, (v >>> 8) & 0xff, (v >>> 16) & 0xff, (v >>> 24) & 0xff); }
+
+function concatBytes(...parts) {
+  const total = parts.reduce((a, p) => a + p.length, 0);
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const p of parts) { out.set(p, off); off += p.length; }
+  return out;
+}
+
+let _crcTable;
+function makeCrcTable() {
+  const table = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
+    table[n] = c >>> 0;
+  }
+  return table;
+}
+function crc32(bytes) {
+  if (!_crcTable) _crcTable = makeCrcTable();
+  let c = 0 ^ -1;
+  for (let i = 0; i < bytes.length; i++) c = (_crcTable[(c ^ bytes[i]) & 0xff] ^ (c >>> 8)) >>> 0;
+  return (c ^ -1) >>> 0;
 }
 
 function buildCarryoverRows(result, prev) {
@@ -576,6 +815,7 @@ function disableActions(flag) {
   exportJsonBtn.disabled = disabled || !lastResult;
   exportCsvBtn.disabled = disabled || !lastResult;
   if (exportXlsxBtn) exportXlsxBtn.disabled = disabled || !lastResult;
+  if (exportIcsBtn) exportIcsBtn.disabled = disabled || !lastResult;
 }
 
 // carry-over 계산/렌더링

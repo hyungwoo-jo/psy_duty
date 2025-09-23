@@ -35,28 +35,4 @@
 ### 내보내기
 - JSON/CSV/Excel(.xls). Excel은 색상/강조 포함
 
-## 로컬 개발(5174) ↔ Pages 배포 워크플로
-리포에 scripts가 포함되어 있습니다.
 
-- 개발 서버(5174):
-  ```bash
-  scripts/dev.sh 5174 /psy_duty/
-  # 브라우저: http://localhost:5174/psy_duty/
-  ```
-  - 포트 점유 시 자동으로 종료 후 기동
-
-- 배포(Pages 재빌드 트리거):
-  ```bash
-  scripts/deploy.sh "feat: update UI"
-  # 배포 후 URL: https://<계정>.github.io/psy_duty/
-  ```
-
-- 원격 코드 마커 확인(빠른 점검):
-  ```bash
-  scripts/check.sh
-  # app.js에 Stat-to-Pass / loadKRHolidays / duty-roster.xls 포함 확인
-  ```
-
-## GitHub Pages
-- main 브랜치 / 루트(/)에서 서빙
-- 반영까지 30~90초 소요. 급히 재빌드 필요 시 빈 커밋 후 푸시
