@@ -378,7 +378,10 @@ function onExportIcs() {
   }
   if (files.length === 0) return;
   const zip = buildZip(files);
-  download('duty-roster-ics.zip', zip);
+  const monthKey = dominantMonthKey() || (lastResult.startDate || '').slice(0,7) || 'YYYY-MM';
+  const version = (icsVersionInput?.value || 'v1');
+  const verSafe = String(version).replace(/[^\w\-\.]+/g, '_');
+  download(`duty-roster-${monthKey}-${verSafe}.zip`, zip);
 }
 
 // csvEscape 제거(미사용)
