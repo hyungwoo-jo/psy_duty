@@ -86,10 +86,14 @@ R4 이동인"></textarea>
 장주만: 2025-01-06  (이 주간 전체 휴가)
 조형우: 2025-01-20, 2025-02-03"></textarea>
       </div>
-      <div class="field field--full">
-        <label for="ics-base-url">ICS 링크 기본 경로(옵션, Excel 링크용)</label>
-        <input id="ics-base-url" type="text" placeholder="예: https://OWNER.github.io/psy_duty/ics/2025-01/" />
-        <div class="legend">엑셀 파일의 ‘ICS Links’ 시트 하이퍼링크가 외부 URL로 동작하려면 설정하세요. 미설정 시 링크 텍스트만 표시됩니다.</div>
+      <div class="field">
+        <label for="ics-version">ICS 버전명(예: v3)</label>
+        <input id="ics-version" type="text" placeholder="v1" />
+      </div>
+      <div class="field" style="min-width: 380px;">
+        <label>ICS 링크 기준 경로(자동)</label>
+        <div id="ics-preview" class="legend">시작/종료일과 버전으로 자동 계산됩니다.</div>
+        <div class="legend">필요 시 URL 쿼리 ?ics_base=... 로 강제 지정 가능</div>
       </div>
       <div class="field field--full">
         <label>이전 보정 통계 (표준화 입력)</label>

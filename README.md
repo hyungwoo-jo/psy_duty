@@ -36,7 +36,7 @@
 
 ### 내보내기
 - Excel(.xls): 색상/강조 포함 + 추가 시트 ‘ICS Links’에서 인원별 ICS 링크 제공
-  - 주의: 보안 정책상 Excel에서 data: URL은 차단됩니다. 링크가 동작하려면 ‘ICS 링크 기본 경로’를 앱에서 설정하고, 해당 경로에 사람별 .ics 파일을 호스팅해야 합니다(아래 참고).
+  - 주의: Excel 보안 정책상 data: URL은 차단됩니다. 링크는 앱의 ‘ICS 버전’ 입력과 기간(시작/종료일)으로 자동 계산된 경로를 사용합니다(예: `/ics/2025-10/v3/`). 해당 경로에 .ics 파일이 배포되어야 정상 동작합니다(아래 참고).
 - ICS ZIP(옵션): 인원별 `이름.ics`를 ZIP으로 한 번에 다운로드
 
 ## ICS 내보내기 · 달력 추가 가이드
@@ -89,7 +89,7 @@
 4) 사용자에게 URL 제공(버전 포함):
    - 예시: `https://<OWNER>.github.io/psy_duty/ics/2025-01/v3/홍길동.ics`
    - Google 캘린더의 ‘URL로 캘린더 추가’에 위 주소를 입력(https 또는 webcal로 시작 가능)
-5) 앱에서 ‘ICS 링크 기본 경로’를 버전 포함 경로로 설정(예: `https://<OWNER>.github.io/psy_duty/ics/2025-01/v3/`)하고 Excel을 내보내면, ‘ICS Links’ 시트의 링크가 정상 동작합니다.
+5) 앱에서 ‘ICS 버전’을 v3 등으로 입력하고 Excel을 내보내면, ‘ICS Links’ 시트의 링크가 자동으로 `https://<OWNER>.github.io/psy_duty/ics/YYYY-MM/vN/이름.ics`로 구성됩니다(YYYY‑MM은 기간에서 가장 많이 포함된 달 기준).
 
 TIP: GitHub Pages에서 열람 중이면 앱이 기본 경로를 자동 제안합니다(예: `https://<OWNER>.github.io/psy_duty/ics/YYYY-MM/`).
 

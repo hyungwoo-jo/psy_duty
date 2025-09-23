@@ -18,7 +18,8 @@ const vacationsInput = document.querySelector('#vacations');
 const previousStatsUIRoot = document.querySelector('#prev-stats-ui');
 const loadingOverlay = document.querySelector('#loading-overlay');
 const loadingTextEl = loadingOverlay ? loadingOverlay.querySelector('.loading-text') : null;
-const icsBaseInput = document.querySelector('#ics-base-url');
+const icsVersionInput = document.querySelector('#ics-version');
+const icsPreview = document.querySelector('#ics-preview');
 // 최적화 선택 UI 제거: 기본 strong
 // 주 계산 모드 옵션 제거: 달력 기준(월–일) 고정
 // 당직 슬롯 고정: 병당 1, 응당 1
@@ -35,19 +36,15 @@ window.addEventListener('DOMContentLoaded', renderPreviousStatsUI);
 window.addEventListener('DOMContentLoaded', () => {
   // GitHub Pages 경로 자동 추정(비어있을 때만)
   try {
-    if (icsBaseInput && !icsBaseInput.value) {
-      // URL query override: ?ics_base=<url>
-      const url = new URL(window.location.href);
-      const qsBase = url.searchParams.get('ics_base');
-      if (qsBase) {
-        icsBaseInput.value = qsBase;
-        return;
-      }
-      const yymm = (startInput?.value || '').slice(0, 7) || '';
-      const g = guessIcsBaseURL({ startDate: yymm || null });
-      if (g) icsBaseInput.value = g;
-    }
+    if (icsVersionInput && !icsVersionInput.value) icsVersionInput.value = 'v1';
+    updateIcsPreview();
   } catch {}
+});
+['change','input'].forEach((ev) => {
+  startInput.addEventListener(ev, updateIcsPreview);
+  endInput.addEventListener(ev, updateIcsPreview);
+  weeksInput.addEventListener(ev, updateIcsPreview);
+  icsVersionInput?.addEventListener(ev, updateIcsPreview);
 });
 // 공휴일 도우미 버튼
 document.querySelector('#load-kr-holidays')?.addEventListener('click', () => loadKRHolidays({ merge: true }));
@@ -340,12 +337,13 @@ function onExportXlsx() {
   const carryRows = buildCarryoverRows(lastResult, prev);
   // Build per-person ICS links sheet
   const linksRows = [ [ { v: '이름', style: 'Header' }, { v: 'ICS', style: 'Header' } ] ];
-  const base = (icsBaseInput?.value || '').trim() || guessIcsBaseURL(lastResult) || '';
-  if (!base) {
-    linksRows.push([ { v: '기본 경로 미설정 — 링크 비활성', style: 'Neg' }, '' ]);
-  } else {
-    linksRows.push([ { v: `기본 경로: ${base}` }, '' ]);
-  }
+  const base = getComputedIcsBase();
+  const monthKey = dominantMonthKey();
+  const version = (icsVersionInput?.value || '').trim() || 'v1';
+  // Summary rows for clarity
+  linksRows.push([ { v: '월', style: 'Header' }, monthKey || '-' ]);
+  linksRows.push([ { v: '버전', style: 'Header' }, version ]);
+  linksRows.push([ { v: '기본 경로', style: 'Header' }, base || '미설정(링크 비활성)' ]);
   for (const e of lastResult.employees) {
     if (!hasDutiesFor(lastResult, e.name)) continue;
     let cell = { v: '설정 필요' };
@@ -361,7 +359,9 @@ function onExportXlsx() {
     { name: 'StatToPass', rows: carryRows },
     { name: 'ICS Links', rows: linksRows },
   ]);
-  download('duty-roster.xls', xml);
+  const fileMonth = monthKey || (lastResult.startDate || '').slice(0,7) || 'YYYY-MM';
+  const verSafe = String(version).replace(/[^\w\-\.]+/g, '_');
+  download(`duty-roster-${fileMonth}-${verSafe}.xls`, xml);
 }
 
 function onExportIcs() {
@@ -462,10 +462,7 @@ function guessIcsBaseURL(result) {
     const isGh = /github\.io$/.test(host);
     const yymm = (result?.startDate || '').slice(0, 7) || '';
     if (isGh) return `${origin}/psy_duty/ics/${yymm}/`;
-    if (path.includes('/psy_duty/')) {
-      const base = `${origin}/psy_duty/ics/${yymm}/`;
-      return base;
-    }
+    if (path.includes('/psy_duty/')) return `${origin}/psy_duty/ics/${yymm}/`;
   } catch {}
   return '';
 }
@@ -473,6 +470,49 @@ function guessIcsBaseURL(result) {
 function joinUrl(base, path) {
   const b = base.endsWith('/') ? base : base + '/';
   return b + (path.startsWith('/') ? path.slice(1) : path);
+}
+
+function getComputedIcsBase() {
+  try {
+    const url = new URL(window.location.href);
+    const override = url.searchParams.get('ics_base');
+    if (override) return override;
+  } catch {}
+  const version = (icsVersionInput?.value || '').trim();
+  if (!version) return '';
+  const monthKey = dominantMonthKey();
+  if (!monthKey) return '';
+  const origin = window.location.origin;
+  // Assume repository path is /psy_duty/
+  return `${origin}/psy_duty/ics/${monthKey}/${version}/`;
+}
+
+function dominantMonthKey() {
+  try {
+    const s = startInput.value; if (!s) return '';
+    const start = new Date(s);
+    let end = null;
+    if (endInput.value) end = new Date(endInput.value);
+    else {
+      const weeks = Math.max(1, Math.min(8, Number(weeksInput.value || 4)));
+      end = addDays(start, weeks * 7 - 1);
+    }
+    const counts = new Map();
+    for (let d = new Date(start); d <= end; d = addDays(d, 1)) {
+      const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+      counts.set(key, (counts.get(key) || 0) + 1);
+    }
+    let best = ''; let max = -1;
+    for (const [k, v] of counts) { if (v > max) { max = v; best = k; } }
+    return best;
+  } catch { return ''; }
+}
+
+function updateIcsPreview() {
+  try {
+    const base = getComputedIcsBase();
+    if (icsPreview) icsPreview.textContent = base || '시작/종료일과 버전으로 자동 계산됩니다.';
+  } catch {}
 }
 
 function buildICS(result, opts = {}) {
