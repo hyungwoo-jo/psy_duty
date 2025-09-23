@@ -39,6 +39,14 @@
   - 주의: Excel 보안 정책상 data: URL은 차단됩니다. 링크는 앱의 ‘ICS 버전’ 입력과 기간(시작/종료일)으로 자동 계산된 경로를 사용합니다(예: `/ics/2025-10/v3/`). 해당 경로에 .ics 파일이 배포되어야 정상 동작합니다(아래 참고).
 - ICS ZIP(옵션): 인원별 `이름.ics`를 ZIP으로 한 번에 다운로드
 
+### 파일 이름 규칙(권장)
+- Excel: `duty-roster-YYYY-MM-vN.xls` (예: `duty-roster-2025-10-v3.xls`)
+  - 앱이 자동으로 이 규칙으로 저장합니다.
+- ICS ZIP: `duty-roster-YYYY-MM-vN.zip`
+  - GitHub Actions가 태그를 못 읽을 경우 ZIP 파일명에서 `YYYY-MM-vN`을 자동 추출합니다.
+- Release 태그: `ics-YYYY-MM-vN` (예: `ics-2025-10-v3`)
+  - 태그가 맞으면 이를 우선 사용하고, 아니라면 ZIP 파일명으로 보정합니다.
+
 ## ICS 내보내기 · 달력 추가 가이드
 
 ### 개요
@@ -96,13 +104,13 @@ TIP: GitHub Pages에서 열람 중이면 앱이 기본 경로를 자동 제안�
 ### 완전 자동 배포(GitHub Actions · 추천)
 브라우저만으로 끝내고 싶다면 GitHub Release 이벤트로 자동 배포하세요.
 
-- 요약: 새 Release를 만들고 ZIP(.ics 묶음)을 첨부하면, Actions가 자동으로 `public/ics/YYYY-MM/vN/`에 전개/커밋/푸시합니다.
+- 요약: 새 Release를 만들고 ZIP(.ics 묶음)을 첨부하면, Actions가 자동으로 `public/ics/YYYY-MM/vN/`에 전개/커밋/푸시합니다. (같이 올린 Excel 파일도 같은 폴더에 포함됩니다.)
 - 규칙: Release 태그는 `ics-YYYY-MM-vN` 형식이어야 합니다(예: `ics-2025-10-v3`). Release 자산의 첫 번째 .zip을 사용합니다.
 - 절차:
   1) 앱에서 ‘ICS 내보내기’로 ZIP 다운로드
   2) GitHub → Releases → New release
-     - Tag: `ics-2025-10-v3` (예)
-     - Attach binaries: ZIP 업로드 → Publish
+     - Tag: `ics-2025-10-v3` (예) — 또는 ZIP 파일명을 `duty-roster-2025-10-v3.zip`처럼 맞추면 자동 추출됩니다.
+     - Attach binaries: ZIP 업로드 (+ 선택: Excel 파일) → Publish
   3) 자동 배포 후 공유:
      - 버전 고정: `https://<OWNER>.github.io/psy_duty/ics/2025-10/v3/이름.ics`
      - 월 인덱스: `https://<OWNER>.github.io/psy_duty/ics/2025-10/` (해당 vN으로 자동 리다이렉트)

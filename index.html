@@ -62,13 +62,13 @@ R4 이동인"></textarea>
           ].join('\n');
         });
       </script>
-      <div class="field field--full">
+      <div class="field field--full field--highlight">
         <label for="holidays">공휴일 지정 (YYYY-MM-DD, 한 줄에 한 개)</label>
-        <div style="display:flex; gap:8px; align-items:flex-start; flex-wrap: wrap;">
+        <div class="helper-toolbar">
           <textarea id="holidays" rows="4" placeholder="예시:\n2025-01-01\n-2025-02-28 (빼기)"></textarea>
           <div style="display:flex; flex-direction: column; gap:6px;">
-            <button type="button" id="load-kr-holidays">대한민국 공휴일 불러오기</button>
-            <button type="button" id="clear-holidays">공휴일 비우기</button>
+            <button type="button" id="load-kr-holidays" class="btn-accent">대한민국 공휴일 불러오기</button>
+            <button type="button" id="clear-holidays" class="btn-subtle">공휴일 비우기</button>
           </div>
         </div>
       </div>

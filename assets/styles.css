@@ -45,6 +45,7 @@ header p { margin: 0; color: var(--muted); }
 }
 .field textarea { width: calc(100% - 24px); resize: vertical; }
 .field--full { display: block; width: 100%; }
+.field--highlight { border-top: 1px dashed rgba(94,234,212,0.25); padding-top: 8px; }
 
 .actions { padding: 12px; display: flex; gap: 8px; }
 button {
@@ -56,6 +57,24 @@ button {
   cursor: pointer;
 }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Accent buttons (e.g., 공휴일 불러오기) */
+.btn-accent {
+  background: rgba(94,234,212,0.12);
+  border-color: rgba(94,234,212,0.45);
+  color: var(--accent);
+}
+.btn-accent:hover { background: rgba(94,234,212,0.18); }
+
+.btn-subtle {
+  background: rgba(255,255,255,0.03);
+  border-color: rgba(255,255,255,0.12);
+  color: var(--muted);
+}
+.btn-subtle:hover { background: rgba(255,255,255,0.06); }
+
+.helper-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.helper-toolbar .btn-accent { font-weight: 600; }
 
 .messages { padding: 0 12px 12px; color: var(--muted); }
 

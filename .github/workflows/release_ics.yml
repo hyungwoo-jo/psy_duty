@@ -14,7 +14,7 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Parse tag to month/version
+      - name: Parse tag to month/version (if matches)
         id: parse
         run: |
           TAG="${{ github.event.release.tag_name }}"
@@ -22,9 +22,6 @@ jobs:
           if [[ "$TAG" =~ ^ics-([0-9]{4}-[0-9]{2})-(v[0-9]+)$ ]]; then
             echo "month=${BASH_REMATCH[1]}" >> $GITHUB_OUTPUT
             echo "version=${BASH_REMATCH[2]}" >> $GITHUB_OUTPUT
-          else
-            echo "Unsupported tag format: $TAG" >&2
-            exit 2
           fi
 
       - name: Find ICS ZIP asset
@@ -46,7 +43,25 @@ jobs:
           echo "asset_id=$ASSET_ID" >> $GITHUB_OUTPUT
           echo "asset_name=$ASSET_NAME" >> $GITHUB_OUTPUT
 
-      - name: Download asset
+      - name: Derive month/version from asset name if needed
+        id: derive
+        run: |
+          M="${{ steps.parse.outputs.month }}"
+          V="${{ steps.parse.outputs.version }}"
+          NAME="${{ steps.asset.outputs.asset_name }}"
+          if [[ -z "$M" || -z "$V" ]]; then
+            # Accept names like duty-roster-YYYY-MM-vN.zip
+            if [[ "$NAME" =~ ([0-9]{4}-[0-9]{2})-(v[0-9]+) ]]; then
+              M="${BASH_REMATCH[1]}"; V="${BASH_REMATCH[2]}"
+            else
+              echo "Failed to derive month/version from tag or asset name ($NAME)" >&2
+              exit 5
+            fi
+          fi
+          echo "month=$M" >> $GITHUB_OUTPUT
+          echo "version=$V" >> $GITHUB_OUTPUT
+
+      - name: Download ICS ZIP asset
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -55,20 +70,47 @@ jobs:
           curl -L -H "Authorization: token $GH_TOKEN" -H "Accept: application/octet-stream" "$URL" -o ics.zip
           ls -l ics.zip
 
+      - name: Find Excel asset (optional)
+        id: xls
+        env:
+          RELEASE_ID: ${{ github.event.release.id }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          XLS_ID=$(gh api repos/${{ github.repository }}/releases/$RELEASE_ID/assets --jq \
+            'map(select(.name | test("\\.(xls|xlsx)$"))) | .[0].id // empty')
+          XLS_NAME=$(gh api repos/${{ github.repository }}/releases/$RELEASE_ID/assets --jq \
+            'map(select(.name | test("\\.(xls|xlsx)$"))) | .[0].name // empty')
+          echo "asset_id=${XLS_ID}" >> $GITHUB_OUTPUT
+          echo "asset_name=${XLS_NAME}" >> $GITHUB_OUTPUT
+
+      - name: Download Excel asset (optional)
+        if: steps.xls.outputs.asset_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          URL=$(gh api repos/${{ github.repository }}/releases/assets/${{ steps.xls.outputs.asset_id }} -H 'Accept: application/octet-stream' --jq '.url')
+          curl -L -H "Authorization: token $GH_TOKEN" -H "Accept: application/octet-stream" "$URL" -o roster.xls
+          ls -l roster.xls
+
       - name: Unzip to versioned folder
         run: |
           set -euo pipefail
-          OUT_DIR="public/ics/${{ steps.parse.outputs.month }}/${{ steps.parse.outputs.version }}"
+          OUT_DIR="public/ics/${{ steps.derive.outputs.month }}/${{ steps.derive.outputs.version }}"
           test -d "$OUT_DIR" && { echo "Target exists: $OUT_DIR" >&2; exit 4; } || true
           mkdir -p "$OUT_DIR"
           unzip -o ics.zip -d "$OUT_DIR"
+          if [ -f roster.xls ]; then
+            cp -f roster.xls "$OUT_DIR/"
+          fi
           # Build simple index.html
           {
             echo '<!doctype html>'
             echo '<meta charset="utf-8">'
-            echo "<title>ICS ${{ steps.parse.outputs.month }} ${{ steps.parse.outputs.version }}</title>"
+            echo "<title>ICS ${{ steps.derive.outputs.month }} ${{ steps.derive.outputs.version }}</title>"
             echo '<style>body{font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial;max-width:800px;margin:20px auto;padding:0 12px} a{color:#0366d6;text-decoration:none} ul{line-height:1.9} code{background:#f6f8fa;padding:2px 4px;border-radius:4px}</style>'
-            echo "<h1>ICS ${{ steps.parse.outputs.month }} ${{ steps.parse.outputs.version }}</h1>"
+            echo "<h1>ICS ${{ steps.derive.outputs.month }} ${{ steps.derive.outputs.version }}</h1>"
             echo '<ul>'
             for f in "$OUT_DIR"/*.ics; do
               bn=$(basename "$f")
@@ -78,12 +120,12 @@ jobs:
             echo '</ul>'
           } >"$OUT_DIR/index.html"
           # Update month redirect to latest (this release)
-          MONTH_DIR="public/ics/${{ steps.parse.outputs.month }}"
+          MONTH_DIR="public/ics/${{ steps.derive.outputs.month }}"
           mkdir -p "$MONTH_DIR"
           printf '%s\n' '<!doctype html>' '<meta charset="utf-8">' \
-            "<meta http-equiv=\"refresh\" content=\"0; url=./${{ steps.parse.outputs.version }}/\">" \
-            "<title>${{ steps.parse.outputs.month }} ICS redirect</title>" \
-            "<p>Redirecting to ${{ steps.parse.outputs.version }} … <a href=\"./${{ steps.parse.outputs.version }}/\">click here</a></p>" \
+            "<meta http-equiv=\"refresh\" content=\"0; url=./${{ steps.derive.outputs.version }}/\">" \
+            "<title>${{ steps.derive.outputs.month }} ICS redirect</title>" \
+            "<p>Redirecting to ${{ steps.derive.outputs.version }} … <a href=\"./${{ steps.derive.outputs.version }}/\">click here</a></p>" \
             >"$MONTH_DIR/index.html"
 
       - name: Commit and push
@@ -96,4 +138,3 @@ jobs:
           git add -A public/ics
           git commit -m "ci(release): publish ${{ steps.parse.outputs.month }} ${{ steps.parse.outputs.version }} from release asset ${{ steps.asset.outputs.asset_name }}" || true
           git push origin HEAD:${{ github.ref_name == 'refs/heads/main' && 'main' || 'main' }}
-
