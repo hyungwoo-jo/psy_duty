@@ -28,50 +28,41 @@ jobs:
             echo "month=${BASH_REMATCH[1]}" >> $GITHUB_OUTPUT
             echo "version=${BASH_REMATCH[2]}" >> $GITHUB_OUTPUT
           fi
-
-      - name: Resolve release id (for manual runs)
-        if: inputs.tag != ''
-        id: relid
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          TAG="${{ inputs.tag }}"
-          RID=$(gh api "repos/${{ github.repository }}/releases/tags/$TAG" --jq '.id')
-          echo "id=$RID" >> $GITHUB_OUTPUT
-
-      - name: Find ICS ZIP asset
-        id: asset
+      - name: Download ICS ZIP (by tag assets or direct URL)
+        id: dlzip
         env:
           REL_TAG: ${{ inputs.tag != '' && inputs.tag || github.event.release.tag_name }}
-          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          # Poll for the first .zip asset by release tag (case-insensitive .zip)
-          ASSET_ID=""; ASSET_NAME=""; tries=0
+          ZIPFILE=""
+          # Try download from release assets (pattern *.zip)
+          tries=0
           while [[ $tries -lt 24 ]]; do
-            ASSET_ID=$(gh release view "$REL_TAG" --json assets --jq '.assets | map(select(.name | test("(?i)\\.zip$")))[0].id // empty' || true)
-            ASSET_NAME=$(gh release view "$REL_TAG" --json assets --jq '.assets | map(select(.name | test("(?i)\\.zip$")))[0].name // empty' || true)
-            if [[ -n "$ASSET_ID" ]]; then break; fi
+            if gh release download "$REL_TAG" --pattern "*.zip" --dir . --clobber 2>/dev/null; then
+              break
+            fi
             tries=$((tries+1))
             echo "Waiting for ZIP asset to appear ($tries/24)…" >&2
             sleep 5
           done
-          if [[ -z "$ASSET_ID" ]]; then
-            echo "No .zip asset found on this release after waiting. Please attach the ZIP and re-run the workflow." >&2
-            echo "Assets list:" >&2
-            gh release view "$REL_TAG" --json assets || true
+          if ls -1 *.zip >/dev/null 2>&1; then
+            ZIPFILE=$(ls -t *.zip | head -n1)
+          elif [[ -n "${{ inputs.zip_url }}" ]]; then
+            echo "Downloading ZIP from manual url: ${{ inputs.zip_url }}" >&2
+            curl -L "${{ inputs.zip_url }}" -o ics.zip
+            ZIPFILE=ics.zip
+          else
+            echo "No ZIP asset found and no zip_url provided" >&2
             exit 3
           fi
-          echo "asset_id=$ASSET_ID" >> $GITHUB_OUTPUT
-          echo "asset_name=$ASSET_NAME" >> $GITHUB_OUTPUT
+          echo "zip=$ZIPFILE" >> $GITHUB_OUTPUT
 
       - name: Derive month/version from asset name if needed
         id: derive
         run: |
           M="${{ steps.parse.outputs.month }}"
           V="${{ steps.parse.outputs.version }}"
-          NAME="${{ steps.asset.outputs.asset_name }}"
+          NAME="${{ steps.dlzip.outputs.zip }}"
           if [[ -z "$M" || -z "$V" ]]; then
             # Accept names like duty-roster-YYYY-MM-vN.zip or ...-vNfoo.zip
             if [[ "$NAME" =~ ([0-9]{4}-[0-9]{2})-(v[0-9A-Za-z._-]+) ]]; then
@@ -84,15 +75,6 @@ jobs:
           echo "month=$M" >> $GITHUB_OUTPUT
           echo "version=$V" >> $GITHUB_OUTPUT
 
-      - name: Download ICS ZIP asset
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          URL=$(gh api "repos/${{ github.repository }}/releases/assets/${{ steps.asset.outputs.asset_id }}" -H 'Accept: application/octet-stream' --jq '.url')
-          curl -L -H "Authorization: token $GH_TOKEN" -H "Accept: application/octet-stream" "$URL" -o ics.zip
-          ls -l ics.zip
-
       - name: Find Excel asset (optional)
         id: xls
         env:
@@ -100,20 +82,19 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          XLS_ID=$(gh release view "$REL_TAG" --json assets --jq '.assets | map(select(.name | test("(?i)\\.(xls|xlsx)$")))[0].id // empty')
-          XLS_NAME=$(gh release view "$REL_TAG" --json assets --jq '.assets | map(select(.name | test("(?i)\\.(xls|xlsx)$")))[0].name // empty')
-          echo "asset_id=${XLS_ID}" >> $GITHUB_OUTPUT
-          echo "asset_name=${XLS_NAME}" >> $GITHUB_OUTPUT
+          if gh release download "$REL_TAG" --pattern "*.xls*" --dir . --clobber 2>/dev/null; then
+            NAME=$(ls -t *.xls* | head -n1)
+            echo "name=$NAME" >> $GITHUB_OUTPUT
+          else
+            echo "name=" >> $GITHUB_OUTPUT
+          fi
 
-      - name: Download Excel asset (optional)
-        if: steps.xls.outputs.asset_id != ''
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Download Excel (optional via URL)
+        if: steps.xls.outputs.name == '' && inputs.xls_url != ''
         run: |
           set -euo pipefail
-          URL=$(gh api "repos/${{ github.repository }}/releases/assets/${{ steps.xls.outputs.asset_id }}" -H 'Accept: application/octet-stream' --jq '.url')
-          curl -L -H "Authorization: token $GH_TOKEN" -H "Accept: application/octet-stream" "$URL" -o roster.xls
-          ls -l roster.xls
+          curl -L "${{ inputs.xls_url }}" -o roster.xls
+          ls -l roster.xls || true
 
       - name: Unzip to versioned folder
         run: |
@@ -121,8 +102,10 @@ jobs:
           OUT_DIR="ics/${{ steps.derive.outputs.month }}/${{ steps.derive.outputs.version }}"
           test -d "$OUT_DIR" && { echo "Target exists: $OUT_DIR" >&2; exit 4; } || true
           mkdir -p "$OUT_DIR"
-          unzip -o ics.zip -d "$OUT_DIR"
-          if [ -f roster.xls ]; then
+          unzip -o "${{ steps.dlzip.outputs.zip }}" -d "$OUT_DIR"
+          XLS_LOCAL="${{ steps.xls.outputs.name }}"
+          if [ -z "$XLS_LOCAL" ] && [ -f roster.xls ]; then XLS_LOCAL=roster.xls; fi
+          if [ -n "$XLS_LOCAL" ] && [ -f "$XLS_LOCAL" ]; then
             cp -f roster.xls "$OUT_DIR/"
           fi
           # Build simple index.html
