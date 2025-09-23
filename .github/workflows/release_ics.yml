@@ -97,7 +97,7 @@ jobs:
       - name: Unzip to versioned folder
         run: |
           set -euo pipefail
-          OUT_DIR="public/ics/${{ steps.derive.outputs.month }}/${{ steps.derive.outputs.version }}"
+          OUT_DIR="ics/${{ steps.derive.outputs.month }}/${{ steps.derive.outputs.version }}"
           test -d "$OUT_DIR" && { echo "Target exists: $OUT_DIR" >&2; exit 4; } || true
           mkdir -p "$OUT_DIR"
           unzip -o ics.zip -d "$OUT_DIR"
@@ -120,7 +120,7 @@ jobs:
             echo '</ul>'
           } >"$OUT_DIR/index.html"
           # Update month redirect to latest (this release)
-          MONTH_DIR="public/ics/${{ steps.derive.outputs.month }}"
+          MONTH_DIR="ics/${{ steps.derive.outputs.month }}"
           mkdir -p "$MONTH_DIR"
           printf '%s\n' '<!doctype html>' '<meta charset="utf-8">' \
             "<meta http-equiv=\"refresh\" content=\"0; url=./${{ steps.derive.outputs.version }}/\">" \
@@ -135,6 +135,6 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions"
           git config user.email "github-actions@users.noreply.github.com"
-          git add -A public/ics
+          git add -A ics
           git commit -m "ci(release): publish ${{ steps.parse.outputs.month }} ${{ steps.parse.outputs.version }} from release asset ${{ steps.asset.outputs.asset_name }}" || true
           git push origin HEAD:${{ github.ref_name == 'refs/heads/main' && 'main' || 'main' }}

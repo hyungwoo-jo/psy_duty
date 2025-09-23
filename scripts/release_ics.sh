@@ -42,7 +42,7 @@ if [[ -z "$MONTH" || -z "$VERSION" ]]; then
   exit 2
 fi
 
-OUT_DIR="public/ics/${MONTH}/${VERSION}"
+OUT_DIR="ics/${MONTH}/${VERSION}"
 if [[ -d "$OUT_DIR" ]]; then
   echo "Error: target already exists: $OUT_DIR" >&2
   echo "Create a new --version (e.g., v4) to avoid overwriting." >&2
@@ -69,7 +69,7 @@ fi
 
 if $SET_LATEST; then
   echo "Updating index redirect for ${MONTH} -> ${VERSION} ..."
-  MONTH_DIR="public/ics/${MONTH}"
+  MONTH_DIR="ics/${MONTH}"
   mkdir -p "$MONTH_DIR"
   cat >"$MONTH_DIR/index.html" <<HTML
 <!doctype html>
@@ -102,7 +102,7 @@ echo "Building index.html for ${OUT_DIR} ..."
 } >"$OUT_DIR/index.html"
 
 echo "Preparing commit..."
-git add -A public/ics
+git add -A ics
 MSG="release(ics): ${MONTH} ${VERSION}"
 git commit -m "$MSG" || true
 
