@@ -18,6 +18,7 @@ const vacationsInput = document.querySelector('#vacations');
 const previousStatsUIRoot = document.querySelector('#prev-stats-ui');
 const loadingOverlay = document.querySelector('#loading-overlay');
 const loadingTextEl = loadingOverlay ? loadingOverlay.querySelector('.loading-text') : null;
+const icsBaseInput = document.querySelector('#ics-base-url');
 // 최적화 선택 UI 제거: 기본 strong
 // 주 계산 모드 옵션 제거: 달력 기준(월–일) 고정
 // 당직 슬롯 고정: 병당 1, 응당 1
@@ -31,6 +32,23 @@ exportIcsBtn?.addEventListener('click', onExportIcs);
 // 직원 목록 변경 시 보정 UI 갱신
 employeesInput.addEventListener('input', debounce(renderPreviousStatsUI, 250));
 window.addEventListener('DOMContentLoaded', renderPreviousStatsUI);
+window.addEventListener('DOMContentLoaded', () => {
+  // GitHub Pages 경로 자동 추정(비어있을 때만)
+  try {
+    if (icsBaseInput && !icsBaseInput.value) {
+      // URL query override: ?ics_base=<url>
+      const url = new URL(window.location.href);
+      const qsBase = url.searchParams.get('ics_base');
+      if (qsBase) {
+        icsBaseInput.value = qsBase;
+        return;
+      }
+      const yymm = (startInput?.value || '').slice(0, 7) || '';
+      const g = guessIcsBaseURL({ startDate: yymm || null });
+      if (g) icsBaseInput.value = g;
+    }
+  } catch {}
+});
 // 공휴일 도우미 버튼
 document.querySelector('#load-kr-holidays')?.addEventListener('click', () => loadKRHolidays({ merge: true }));
 document.querySelector('#clear-holidays')?.addEventListener('click', () => { holidaysInput.value = ''; });
@@ -322,11 +340,21 @@ function onExportXlsx() {
   const carryRows = buildCarryoverRows(lastResult, prev);
   // Build per-person ICS links sheet
   const linksRows = [ [ { v: '이름', style: 'Header' }, { v: 'ICS', style: 'Header' } ] ];
+  const base = (icsBaseInput?.value || '').trim() || guessIcsBaseURL(lastResult) || '';
+  if (!base) {
+    linksRows.push([ { v: '기본 경로 미설정 — 링크 비활성', style: 'Neg' }, '' ]);
+  } else {
+    linksRows.push([ { v: `기본 경로: ${base}` }, '' ]);
+  }
   for (const e of lastResult.employees) {
     if (!hasDutiesFor(lastResult, e.name)) continue;
-    const ics = buildICS(lastResult, { nameFilter: e.name, includeBack: false });
-    const href = 'data:text/calendar;charset=utf-8;base64,' + base64Utf8(ics);
-    linksRows.push([ e.name, { v: '다운로드', href } ]);
+    let cell = { v: '설정 필요' };
+    if (base) {
+      const fname = safePersonFilename(e.name) + '.ics';
+      const href = joinUrl(base, encodeURIComponent(fname));
+      cell = { v: `${e.name}.ics`, href };
+    }
+    linksRows.push([ e.name, cell ]);
   }
   const xml = buildSpreadsheetXML([
     { name: 'Roster', rows: rosterRows },
@@ -424,6 +452,27 @@ function sheetXML(name, rows) {
     return `<Row>${cells}</Row>`;
   }).join('');
   return `<Worksheet ss:Name=\"${safe}\"><Table>${rs}</Table></Worksheet>`;
+}
+
+function guessIcsBaseURL(result) {
+  try {
+    const origin = window.location.origin;
+    const host = window.location.hostname || '';
+    const path = window.location.pathname || '';
+    const isGh = /github\.io$/.test(host);
+    const yymm = (result?.startDate || '').slice(0, 7) || '';
+    if (isGh) return `${origin}/psy_duty/ics/${yymm}/`;
+    if (path.includes('/psy_duty/')) {
+      const base = `${origin}/psy_duty/ics/${yymm}/`;
+      return base;
+    }
+  } catch {}
+  return '';
+}
+
+function joinUrl(base, path) {
+  const b = base.endsWith('/') ? base : base + '/';
+  return b + (path.startsWith('/') ? path.slice(1) : path);
 }
 
 function buildICS(result, opts = {}) {

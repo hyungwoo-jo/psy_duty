@@ -35,7 +35,8 @@
 - 텍스트에서 제외와 추가 가능
 
 ### 내보내기
-- Excel(.xls): 색상/강조 포함 + 추가 시트 ‘ICS Links’에서 인원별 ICS 다운로드 링크 제공
+- Excel(.xls): 색상/강조 포함 + 추가 시트 ‘ICS Links’에서 인원별 ICS 링크 제공
+  - 주의: 보안 정책상 Excel에서 data: URL은 차단됩니다. 링크가 동작하려면 ‘ICS 링크 기본 경로’를 앱에서 설정하고, 해당 경로에 사람별 .ics 파일을 호스팅해야 합니다(아래 참고).
 - ICS ZIP(옵션): 인원별 `이름.ics`를 ZIP으로 한 번에 다운로드
 
 ## ICS 내보내기 · 달력 추가 가이드
@@ -81,11 +82,21 @@
 ### 사람별 URL을 만드는 방법(정적 Pages 기준)
 1) 앱에서 JSON 내보내기로 `duty-roster.json` 저장
 2) 아래 스크립트로 사람별 ICS 생성
-   - `python3 scripts/build_ics.py duty-roster.json -o public/ics/2025-01`
+   - 버전 디렉토리 권장: `scripts/release_ics.sh --month 2025-01 --version v3 --json duty-roster.json --set-latest`
+   - 수동으로 하려면: `python3 scripts/build_ics.py duty-roster.json -o public/ics/2025-01/v3`
 3) `public/ics/2025-01` 경로를 리포지토리에 포함시키고 배포(`scripts/deploy.sh`)
 4) 사용자에게 URL 제공:
    - 예시: `https://<OWNER>.github.io/psy_duty/ics/2025-01/홍길동.ics`
    - Google 캘린더의 ‘URL로 캘린더 추가’에 위 주소를 입력(https 또는 webcal로 시작 가능)
+5) 앱에서 ‘ICS 링크 기본 경로’를 버전 포함 경로로 설정하고(예: `https://<OWNER>.github.io/psy_duty/ics/2025-01/v3/`) Excel을 내보내면, ‘ICS Links’ 시트의 링크가 정상 동작합니다.
+
+TIP: GitHub Pages에서 열람 중이면 앱이 기본 경로를 자동 제안합니다(예: `https://<OWNER>.github.io/psy_duty/ics/YYYY-MM/`).
+
+### 재생성/수정 시 덮어쓰기 방지 전략(중요)
+- 버전 디렉토리 사용: 월별 디렉토리 아래에 `v1`, `v2`, `v3`처럼 버전 하위 디렉토리를 두고, 확정판만 공유합니다.
+- Excel의 “ICS 링크 기본 경로”도 해당 버전 경로를 사용합니다(예: `/ics/2025-10/v3/`). 그러면 v4를 만들어도 기존 링크는 v3를 가리킵니다.
+- 최신 공개 버전을 바꾸고 싶을 때만 `scripts/release_ics.sh ... --set-latest`로 `index.html` 리다이렉트를 최신으로 갱신하세요(브라우징 편의용).
+- 권한 관리: GitHub Pages의 파일은 리포에 커밋/푸시해야만 바뀝니다. 앱 페이지에서 ‘만들기’를 눌러도 서버에 올라가지 않으므로, 유지관리자만 릴리스 스크립트를 실행/배포하도록 운영하세요.
 
 갱신/재생성 시 동작
 - 앱에서 다시 생성 후 JSON→ICS를 동일 경로(예: `ics/2025-01/이름.ics`)에 덮어쓰면, 구독 중인 사용자에게 자동 반영됩니다.
