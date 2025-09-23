@@ -1,0 +1,8 @@
+# Ignore generated ICS assets locally (published via Actions)
+/ics/*
+!/ics/.gitkeep
+
+# Server runtime files
+/serve/server.log
+/serve/server.pid
+
