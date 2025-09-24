@@ -206,10 +206,20 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
     }
     if (bestOpt) {
       for (let i = 0; i < schedule.length; i += 1) {
-        schedule[i].duties = (bestOpt.map[i] || []).map((id) => {
-          const p = people.find((pp) => pp.id === id);
-          return { id: p.id, name: p.name };
-        });
+        // 기본은 최적화 결과를 채우되, 사전 강제배치는 보존
+        const forced = preAssigned[i] || [null, null];
+        const row = (bestOpt.map[i] || []).slice();
+        for (let s = 0; s < 2; s += 1) {
+          if (forced[s]) {
+            row[s] = forced[s].id; // 강제 id로 고정
+          }
+        }
+        schedule[i].duties = row
+          .filter((v) => v != null)
+          .map((id) => {
+            const p = people.find((pp) => pp.id === id);
+            return { id: p.id, name: p.name };
+          });
       }
       applyPeopleState(people, bestOpt.peopleSim);
       warnings.push(...bestOpt.warningsAfter);
