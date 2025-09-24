@@ -941,7 +941,7 @@ function renderCarryoverStats(result, opts = {}) {
   const order = ['R1','R2','R3','R4','기타'];
   for (const klass of order) {
     if (!groups.has(klass)) continue;
-    if (klass === 'R3') continue; // R3 보류
+    // R3 포함: 같은 로직으로 보정치 계산
     const people = groups.get(klass);
     const sectionsOffOnly = [ { key: 'off', label: 'Day-off', map: dayOff } ];
 
@@ -1187,14 +1187,13 @@ function renderPreviousStatsUI() {
   ['이름', '병당', '응당', 'Day-off'].forEach((h) => { const th = document.createElement('th'); th.textContent = h; thr.appendChild(th); });
   thead.appendChild(thr); table.appendChild(thead);
   const tbody = document.createElement('tbody');
-  const opts = [0, +1, +2, +3, +4, +5, -1, -2, -3, -4, -5];
   for (const e of emps) {
     const tr = document.createElement('tr'); tr.setAttribute('data-name', e.name);
     const nameTd = document.createElement('td'); nameTd.textContent = `${e.name} (${e.klass || '-'})`; tr.appendChild(nameTd);
     for (const role of ['byung','eung','off']) {
       const td = document.createElement('td'); td.classList.add('num');
       const input = document.createElement('input');
-      input.type = 'number'; input.min = '-5'; input.max = '5'; input.step = '1'; input.value = '0';
+      input.type = 'number'; input.step = '1'; input.value = '0';
       input.setAttribute('data-role', role);
       td.appendChild(input); tr.appendChild(td);
     }

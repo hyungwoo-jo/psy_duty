@@ -6,7 +6,7 @@
 - 공휴일: YYYY-MM-DD(줄당 1개), `-YYYY-MM-DD`로 제외
 - 개인 불가일: `이름: YYYY-MM-DD, YYYY-MM-DD ...`
 - 휴가: `이름: YYYY-MM-DD, ...` → 해당 날짜가 속한 주 전체 제외
-- 이전 보정(Stat-to-Pass 입력): 각 사람별 병당/응당/Day-off에 대해 −5..+5
+- 이전 보정(Stat-to-Pass 입력): 각 사람별 병당/응당/Day-off에 대해 정수(자유 입력)
 - 생성 → 요약/통계/보정치/당직표 확인 → Excel(.xls) 내보내기(ICS 링크 포함)
 
 ## 규칙(핵심)

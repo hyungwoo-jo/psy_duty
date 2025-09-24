@@ -113,6 +113,48 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
   // 메인 할당 루프
   const warnings = [];
   const meta = { elapsedMs: 0 };
+  // 평일 불가일 → 전날 강제 배치(가능 시) 사전 처리
+  const preAssigned = Array.from({ length: days.length }, () => [null, null]);
+  const preAssignFailures = [];
+  (function preassignFromUnavailable() {
+    // 수집: (prevIndex, person)
+    const reqs = [];
+    for (const p of people) {
+      for (const key of (p.unavailable || new Set())) {
+        const d = new Date(key);
+        if (!isWorkday(d, holidaySet)) continue; // 평일만 대상
+        const prevKey = fmtDate(addDays(d, -1));
+        const pi = keyToIndex.get(prevKey);
+        if (pi == null) { preAssignFailures.push(`${p.name} ${key} (전일 없음)`); continue; }
+        reqs.push({ pi, key, p });
+      }
+    }
+    // 날짜 오름차순으로 처리 (충돌 완화)
+    reqs.sort((a, b) => a.pi - b.pi);
+    for (const { pi, key, p } of reqs) {
+      const date = days[pi];
+      const todayKey = fmtDate(date);
+      // 기본 제약 체크: 해당일 휴가/불가/중복/연속 금지
+      if (p.vacationDays && p.vacationDays.has(todayKey)) { preAssignFailures.push(`${p.name} ${key} (전일 휴가)`); continue; }
+      if (p.unavailable && p.unavailable.has(todayKey)) { preAssignFailures.push(`${p.name} ${key} (전일 불가)`); continue; }
+      if (pi > 0) {
+        const prevPrev = preAssigned[pi - 1] || [];
+        if (prevPrev[0]?.id === p.id || prevPrev[1]?.id === p.id) { preAssignFailures.push(`${p.name} ${key} (연속 당직 불가)`); continue; }
+      }
+      // 슬롯 매칭(연차)
+      let placed = false;
+      for (let s = 0; s < 2; s += 1) {
+        if (preAssigned[pi][s]) continue;
+        const need = requiredClassFor(date, holidaySet, s);
+        if (p.klass !== need) continue;
+        preAssigned[pi][s] = { id: p.id, name: p.name };
+        placed = true; break;
+      }
+      if (!placed) {
+        preAssignFailures.push(`${p.name} ${key} (전일 연차/슬롯 불일치 또는 충돌)`);
+      }
+    }
+  })();
   // 응급 back 고정 인원(R3 중 응급 태그)
   const emergencyBack = people.find((p) => p.klass === 'R3' && p.emergency);
   for (let i = 0; i < schedule.length; i += 1) {
@@ -120,6 +162,14 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
     if (emergencyBack) cell.back = { id: emergencyBack.id, name: emergencyBack.name };
     // 당직 슬롯 고정: 병당 1, 응당 1 -> 총 2명/일
     for (let slot = 0; slot < 2; slot += 1) {
+      // 사전 강제 배치가 있으면 우선 적용
+      if (preAssigned[i][slot]) {
+        const forced = preAssigned[i][slot];
+        cell.duties.push({ id: forced.id, name: forced.name });
+        const person = people.find((pp) => pp.id === forced.id);
+        if (person) applyAssignment({ person, index: i, date: cell.date, holidaySet });
+        continue;
+      }
       const needKlass = requiredClassFor(cell.date, holidaySet, slot);
       const result = pickCandidate({ index: i, date: cell.date, schedule, people, holidaySet, needKlass });
 
@@ -193,7 +243,7 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
     endDate: endDate ? fmtDate(addDays(start, totalDays - 1)) : null,
     schedule,
     config: { weekMode, weekdaySlots: Math.max(1, Math.min(2, weekdaySlots)), weekendSlots: Math.max(1, weekendSlots) },
-    warnings,
+    warnings: preAssignFailures.length ? (warnings.concat([`불가일 전일 당직 배치 실패: ${preAssignFailures.join(' / ')}`])) : warnings,
     stats: people.map((p, i) => ({
       id: p.id,
       name: p.name,
