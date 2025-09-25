@@ -724,7 +724,7 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
       let countClassVar = 0;     // 연차 내 총 당직 횟수 분산 (최우선)
       let vacFavorPen = 0;       // 휴가자 과도 배치 억제 페널티
       let weekendBoundPen = 0;   // 주말 당직 편차 ±1 초과 페널티
-      let roleBoundPen = 0;      // (R3 제외) 역할별 개인 편차 ±2 초과 페널티
+      let roleBoundPen = 0;      // (R3 제외) 역할별 개인 편차 ±1 초과 페널티
       for (const [klass, arr] of byClass) {
         if (!klass) continue;
         const bys = arr.map((p) => p._byung || 0);
@@ -756,8 +756,8 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
           for (const p of arr) {
             const by = p._byung || 0;
             const eu = p._eung || 0;
-            const overBy = Math.max(0, Math.abs(by - mb) - 2);
-            const overEu = Math.max(0, Math.abs(eu - me) - 2);
+            const overBy = Math.max(0, Math.abs(by - mb) - 1);
+            const overEu = Math.max(0, Math.abs(eu - me) - 1);
             roleBoundPen += overBy + overEu;
           }
         }

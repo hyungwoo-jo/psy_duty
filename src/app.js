@@ -957,11 +957,18 @@ function renderWeeklyHours(result) {
     for (const s of groups.get(klass)) {
       const tr = document.createElement('tr');
       const total = (s.totalHours).toFixed(1);
-      const cells = [s.name, ...weekKeys.map((wk) => ((s.weeklyHours[wk] || 0)).toFixed(1)), total];
+      const values = weekKeys.map((wk) => (s.weeklyHours[wk] || 0));
+      const cells = [s.name, ...values.map((v) => v.toFixed(1)), total];
       cells.forEach((val, idx) => {
         const td = document.createElement('td');
         td.textContent = String(val);
         if (idx >= 1) td.classList.add('num');
+        // 주별 시간 셀 스타일링: <72 무색, ==72 약하게, >72 하이라이트
+        if (idx >= 1 && idx <= weekKeys.length) {
+          const v = values[idx - 1] || 0;
+          if (v > 72 + 1e-9) td.classList.add('wk-over');
+          else if (Math.abs(v - 72) <= 1e-9) td.classList.add('wk-soft');
+        }
         tr.appendChild(td);
       });
       tbody.appendChild(tr);

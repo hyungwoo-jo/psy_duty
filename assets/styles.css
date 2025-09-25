@@ -130,6 +130,8 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .report-table th, .report-table td { border: 1px solid var(--grid); padding: 6px 8px; }
 .report-table th { background: #0f1318; color: var(--muted); text-align: left; }
 .report-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.report-table td.wk-soft { background: rgba(250, 204, 21, 0.10); }
+.report-table td.wk-over { background: rgba(239, 68, 68, 0.18); font-weight: 600; }
 .report-table tr.weekend td { background: rgba(56, 189, 248, 0.08); }
 .report-table tr.holiday td { background: rgba(250, 204, 21, 0.10); }
 
