@@ -158,12 +158,12 @@ function onGenerate() {
         let result = generateSchedule({ startDate, endDate, weeks, weekMode, employees, holidays, dutyUnavailableByName: Object.fromEntries(dutyUnavailable), dayoffWishByName: Object.fromEntries(dayoffWish), vacationDaysByName: Object.fromEntries(vacations), priorDayDuty: prior, optimization, weekdaySlots, weekendSlots: 2, timeBudgetMs: budgetMs });
         // 자동 재시도: 주 70h 초과가 있으면 최대 5회까지 재시도
         let best = result;
-        let bestEx = countSoftExceed(result, 70);
+        let bestEx = countSoftExceed(result, 72);
         if (bestEx > 0) {
           for (let i = 1; i <= 5; i += 1) {
             setLoading(true, `당직표 생성 중… (재시도 ${i}/5)`);
             const cand = generateSchedule({ startDate, endDate, weeks, weekMode, employees, holidays, dutyUnavailableByName: Object.fromEntries(dutyUnavailable), dayoffWishByName: Object.fromEntries(dayoffWish), vacationDaysByName: Object.fromEntries(vacations), priorDayDuty: prior, optimization, weekdaySlots, weekendSlots: 2, timeBudgetMs: budgetMs });
-            const ex = countSoftExceed(cand, 70);
+            const ex = countSoftExceed(cand, 72);
             if (ex === 0) { best = cand; bestEx = 0; break; }
             if (ex < bestEx) { best = cand; bestEx = ex; }
           }
@@ -178,7 +178,7 @@ function onGenerate() {
         if (exportIcsBtn) exportIcsBtn.disabled = false;
 
         if (bestEx > 0) {
-          const warnMsg = `주의: 일부 주의 70h 초과가 해소되지 않았습니다 (셀 ${bestEx}개). 설정을 조정하거나 인원을 늘려주세요.`;
+          const warnMsg = `주의: 일부 주의 72h 초과가 해소되지 않았습니다 (셀 ${bestEx}개). 설정을 조정하거나 인원을 늘려주세요.`;
           messages.textContent = messages.textContent ? (messages.textContent + ' | ' + warnMsg) : warnMsg;
           try { alert(warnMsg); } catch {}
         }
@@ -762,6 +762,12 @@ function crc32(bytes) {
 function buildCarryoverRows(result, prev) {
   const rows = [[ { v: '연차', style: 'Header' }, { v: '항목', style: 'Header' }, { v: '이름', style: 'Header' }, { v: '보정치', style: 'Header' } ]];
   const { byungCount, eungCount, dayOff } = computeRoleAndOffCounts(result);
+  // 휴가자 우선 + 방향 바이어스: 휴가자가 다음달에 +를 더 받도록 동점 시 선호
+  let vacPrefer = new Set();
+  try {
+    const vac = parseVacationRanges(vacationsInput?.value || '');
+    vacPrefer = new Set([...vac.keys()]);
+  } catch {}
   const groups = new Map();
   for (const e of result.employees) {
     const k = e.klass || '기타';
@@ -780,8 +786,8 @@ function buildCarryoverRows(result, prev) {
       const prevEuByName = new Map(prevEuList.map((e) => [e.name, Number(e.delta) || 0]));
       const curBy = people.map((p) => ({ id: p.id, name: p.name, count: Number(byungCount.get(p.id) || 0) + (prevByByName.get(p.name) || 0) }));
       const curEu = people.map((p) => ({ id: p.id, name: p.name, count: Number(eungCount.get(p.id) || 0) + (prevEuByName.get(p.name) || 0) }));
-      const byDeltas = computeFairMultiDeltas(curBy, 'low');
-      const euDeltas = computeFairMultiDeltas(curEu, 'low');
+      const byDeltas = computeFairMultiDeltas(curBy, 'low', vacPrefer);
+      const euDeltas = computeFairMultiDeltas(curEu, 'low', vacPrefer);
       if (byDeltas.length === 0) rows.push([klass, '병당', '-', '-']);
       else for (const d of byDeltas) rows.push([ klass, '병당', d.name, { v: signed(d.delta), style: d.delta > 0 ? 'Pos' : 'Neg' } ]);
       if (euDeltas.length === 0) rows.push([klass, '응당', '-', '-']);
@@ -1148,7 +1154,7 @@ function computeCleanCarryover(entries) {
 }
 
 // 다자 균형: 총합 보존(sum deltas = 0), 가능한 한 값들을 floor(avg) 또는 ceil(avg)로 맞춤
-function computeFairMultiDeltas(entries, favor = 'low') {
+function computeFairMultiDeltas(entries, favor = 'low', preferSet = new Set()) {
   if (!entries.length) return [];
   const total = entries.reduce((a, e) => a + Number(e.count || 0), 0);
   const n = entries.length;
@@ -1158,7 +1164,21 @@ function computeFairMultiDeltas(entries, favor = 'low') {
   // favor='high': 높은 값부터 base+1 부여(감소량 최소화)
   const sorted = entries
     .map((e, i) => ({ i, ...e }))
-    .sort((a, b) => favor === 'low' ? (a.count - b.count) : (b.count - a.count));
+    .sort((a, b) => {
+      if (favor === 'low') {
+        if (a.count !== b.count) return a.count - b.count;
+        const pa = preferSet.has(a.name) ? -1 : 0;
+        const pb = preferSet.has(b.name) ? -1 : 0;
+        if (pa !== pb) return pa - pb; // preferSet 우선(낮은 그룹에서 먼저 +1)
+        return 0;
+      }
+      // favor='high'
+      if (a.count !== b.count) return b.count - a.count;
+      const pa = preferSet.has(a.name) ? -1 : 0;
+      const pb = preferSet.has(b.name) ? -1 : 0;
+      if (pa !== pb) return pa - pb;
+      return 0;
+    });
   const targets = new Array(n).fill(base);
   for (let k = 0; k < r; k += 1) targets[sorted[k].i] = base + 1;
   const deltas = entries.map((e, i) => ({ id: e.id, name: e.name, delta: targets[i] - Number(e.count || 0) }));
