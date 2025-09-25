@@ -181,11 +181,11 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
         const forced = preAssigned[i][slot];
         cell.duties.push({ id: forced.id, name: forced.name });
         const person = people.find((pp) => pp.id === forced.id);
-        if (person) applyAssignment({ person, index: i, date: cell.date, holidaySet });
+        if (person) applyAssignment({ person, index: i, date: cell.date, holidaySet, slot });
         continue;
       }
       const needKlass = requiredClassFor(cell.date, holidaySet, slot);
-      const result = pickCandidate({ index: i, date: cell.date, schedule, people, holidaySet, needKlass });
+      const result = pickCandidate({ index: i, date: cell.date, schedule, people, holidaySet, needKlass, slot });
 
       if (!result.person) {
         cell.underfilled = true; // 규칙 준수 내에서 미충원
@@ -196,7 +196,7 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
       }
       const picked = result.person;
       cell.duties.push({ id: picked.id, name: picked.name });
-      applyAssignment({ person: picked, index: i, date: cell.date, holidaySet });
+      applyAssignment({ person: picked, index: i, date: cell.date, holidaySet, slot });
     }
   }
 
@@ -300,7 +300,7 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
   // 베이스라인 정규근무는 0으로 모델링 (정규는 ledger 재계산에서 날짜별 2명만 +11h 반영)
   function baselineRegularForWeek() { return 0; }
 
-  function pickCandidate({ index, date, schedule, people, holidaySet, needKlass }) {
+  function pickCandidate({ index, date, schedule, people, holidaySet, needKlass, slot }) {
     const todayKey = fmtDate(date);
     const wk = weekKeyByMode(date, start, weekMode);
     const next = addDays(date, 1);
@@ -375,6 +375,18 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
 
     // 스코어링 (공평성 강화: 전체 총근무시간을 우선 고려)
     const prefToday = preferByIndex[index] || new Set();
+    // 역할별 소프트 캡: (R3 제외) 기대+2 초과자는 우선 제외
+    const afterCap = [];
+    for (const p of pool) {
+      if (p.klass !== 'R3') {
+        const cur = (slot === 0) ? (p._byung || 0) : (p._eung || 0);
+        const cap = (slot === 0) ? (capBy.get(p.id) || Infinity) : (capEu.get(p.id) || Infinity);
+        if (cur >= cap) { stage.special.push(p); continue; }
+      }
+      afterCap.push(p);
+    }
+    pool = afterCap;
+
     const candidates = pool
       .map((p) => {
         const totalHours = Object.values(p.weeklyHours).reduce((a, b) => a + b, 0);
