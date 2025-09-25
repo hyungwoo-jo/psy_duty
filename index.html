@@ -85,6 +85,20 @@ R4 이동인"></textarea>
 장주만: 2025-01-06~2025-01-12
 조형우: 2025-01-20~2025-01-22, 2025-02-03~2025-02-04"></textarea>
       </div>
+      <div class="field field--full">
+        <label>전일 당직(시작일 전날): 월요일 시작 시 전날 일요일 당직자를 지정하세요</label>
+        <div style="display:flex; gap:10px; flex-wrap: wrap; align-items: center;">
+          <div>
+            <div class="legend">전일 병당</div>
+            <input id="prior-byung" type="text" placeholder="이름" />
+          </div>
+          <div>
+            <div class="legend">전일 응당</div>
+            <input id="prior-eung" type="text" placeholder="이름" />
+          </div>
+          <div class="legend">전날이 주말/공휴일이면 시작일은 Day-off(정규/당직 제외)로 처리됩니다.</div>
+        </div>
+      </div>
       <div class="field">
         <label for="ics-version">ICS 버전명(예: v3)</label>
         <input id="ics-version" type="text" placeholder="v1" />
@@ -95,7 +109,7 @@ R4 이동인"></textarea>
         <div class="legend">필요 시 URL 쿼리 ?ics_base=... 로 강제 지정 가능</div>
       </div>
       <div class="field field--full">
-        <label>이전 보정 통계 (표준화 입력)</label>
+        <label>지난달 반영</label>
         <div id="prev-stats-ui"></div>
       </div>
       <div class="actions">

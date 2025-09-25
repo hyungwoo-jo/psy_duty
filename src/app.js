@@ -15,6 +15,8 @@ const roster = document.querySelector('#roster');
 const holidaysInput = document.querySelector('#holidays');
 const unavailableInput = document.querySelector('#unavailable');
 const vacationsInput = document.querySelector('#vacations');
+const priorByungInput = document.querySelector('#prior-byung');
+const priorEungInput = document.querySelector('#prior-eung');
 const previousStatsUIRoot = document.querySelector('#prev-stats-ui');
 const loadingOverlay = document.querySelector('#loading-overlay');
 const loadingTextEl = loadingOverlay ? loadingOverlay.querySelector('.loading-text') : null;
@@ -138,14 +140,15 @@ function onGenerate() {
         const weekMode = 'calendar';
         const weekdaySlots = 2; // 병당 1 + 응당 1
         const vacations = parseVacationRanges(vacationsInput.value);
-        let result = generateSchedule({ startDate, endDate, weeks, weekMode, employees, holidays, unavailableByName: Object.fromEntries(unavailable), vacationDaysByName: Object.fromEntries(vacations), optimization, weekdaySlots, weekendSlots: 2, timeBudgetMs: budgetMs });
+        const prior = getPriorDayDutyFromUI();
+        let result = generateSchedule({ startDate, endDate, weeks, weekMode, employees, holidays, unavailableByName: Object.fromEntries(unavailable), vacationDaysByName: Object.fromEntries(vacations), priorDayDuty: prior, optimization, weekdaySlots, weekendSlots: 2, timeBudgetMs: budgetMs });
         // 자동 재시도: 주 70h 초과가 있으면 최대 5회까지 재시도
         let best = result;
         let bestEx = countSoftExceed(result, 70);
         if (bestEx > 0) {
           for (let i = 1; i <= 5; i += 1) {
             setLoading(true, `당직표 생성 중… (재시도 ${i}/5)`);
-            const cand = generateSchedule({ startDate, endDate, weeks, weekMode, employees, holidays, unavailableByName: Object.fromEntries(unavailable), vacationDaysByName: Object.fromEntries(vacations), optimization, weekdaySlots, weekendSlots: 2, timeBudgetMs: budgetMs });
+            const cand = generateSchedule({ startDate, endDate, weeks, weekMode, employees, holidays, unavailableByName: Object.fromEntries(unavailable), vacationDaysByName: Object.fromEntries(vacations), priorDayDuty: prior, optimization, weekdaySlots, weekendSlots: 2, timeBudgetMs: budgetMs });
             const ex = countSoftExceed(cand, 70);
             if (ex === 0) { best = cand; bestEx = 0; break; }
             if (ex < bestEx) { best = cand; bestEx = ex; }
@@ -171,9 +174,12 @@ function onGenerate() {
         const names = new Set(employees.map((e) => e.name));
         const unknownUnavail = [...unavailable.keys()].filter((n) => !names.has(n));
         const unknownVacs = [...vacations.keys()].filter((n) => !names.has(n));
+        const priorNames = [prior.byung, prior.eung].filter(Boolean);
+        const unknownPrior = priorNames.filter((n) => !names.has(n));
         const notes = [];
         if (unknownUnavail.length) notes.push(`불가일 이름 불일치: ${unknownUnavail.join(', ')}`);
         if (unknownVacs.length) notes.push(`휴가 이름 불일치: ${unknownVacs.join(', ')}`);
+        if (unknownPrior.length) notes.push(`전일 당직 이름 불일치: ${unknownPrior.join(', ')}`);
         messages.textContent = notes.join(' | ');
       } catch (err) {
         console.error(err);
@@ -313,10 +319,11 @@ function renderReport(result, opts = {}) {
 
 function onExportXlsx() {
   if (!lastResult) return;
-  // Build roster sheet with basic styling
-  const rosterRows = [
-    [ { v: '날짜', style: 'Header' }, { v: '병당', style: 'Header' }, { v: '응당', style: 'Header' }, { v: '응급 back', style: 'Header' } ]
-  ];
+  const summaryRows = [];
+  // Roster section
+  summaryRows.push([ { v: '당직표', style: 'Header' } ]);
+  summaryRows.push([]);
+  summaryRows.push([ { v: '날짜', style: 'Header' }, { v: '병당', style: 'Header' }, { v: '응당', style: 'Header' }, { v: '응급 back', style: 'Header' } ]);
   const holidaySet = new Set(lastResult.holidays || []);
   for (const d of lastResult.schedule) {
     const names = d.duties.map((x) => x.name);
@@ -326,21 +333,30 @@ function onExportXlsx() {
     const isWeekend = (wd === 0 || wd === 6);
     const isHoliday = holidaySet.has(key);
     const rowStyle = isHoliday ? 'Holiday' : (isWeekend ? 'Weekend' : null);
-    rosterRows.push([
+    summaryRows.push([
       { v: d.key, style: d.underfilled && !rowStyle ? 'Underfill' : (rowStyle || undefined) },
       { v: names[0] || '', style: rowStyle || undefined },
       { v: names[1] || '', style: rowStyle || undefined },
       { v: d.back?.name || '', style: rowStyle || undefined },
     ]);
   }
+  // 다음달 반영 section
   const prev = getPreviousStatsFromUI();
   const carryRows = buildCarryoverRows(lastResult, prev);
-  // Build per-person ICS links sheet
+  summaryRows.push([]);
+  summaryRows.push([ { v: '다음달 반영', style: 'Header' } ]);
+  for (const r of carryRows) summaryRows.push(r);
+  // 지난달 반영 section
+  const prevRows = buildPreviousAdjustRows(lastResult, prev);
+  summaryRows.push([]);
+  summaryRows.push([ { v: '지난달 반영', style: 'Header' } ]);
+  for (const r of prevRows) summaryRows.push(r);
+
+  // ICS Links separate sheet
   const linksRows = [ [ { v: '이름', style: 'Header' }, { v: 'ICS', style: 'Header' } ] ];
   const base = getComputedIcsBase();
   const monthKey = dominantMonthKey();
   const version = (icsVersionInput?.value || '').trim() || 'v1';
-  // Summary rows for clarity
   linksRows.push([ { v: '월', style: 'Header' }, monthKey || '-' ]);
   linksRows.push([ { v: '버전', style: 'Header' }, version ]);
   linksRows.push([ { v: '기본 경로', style: 'Header' }, base || '미설정(링크 비활성)' ]);
@@ -355,8 +371,7 @@ function onExportXlsx() {
     linksRows.push([ e.name, cell ]);
   }
   const xml = buildSpreadsheetXML([
-    { name: 'Roster', rows: rosterRows },
-    { name: 'StatToPass', rows: carryRows },
+    { name: 'Summary', rows: summaryRows },
     { name: 'ICS Links', rows: linksRows },
   ]);
   const fileMonth = monthKey || (lastResult.startDate || '').slice(0,7) || 'YYYY-MM';
@@ -771,6 +786,26 @@ function buildCarryoverRows(result, prev) {
   return rows;
 }
 
+function buildPreviousAdjustRows(result, prev) {
+  const rows = [[ { v: '연차', style: 'Header' }, { v: '항목', style: 'Header' }, { v: '이름', style: 'Header' }, { v: '보정치', style: 'Header' } ]];
+  const entriesBy = prev.entriesByClassRole || new Map();
+  const order = ['R1','R2','R3','R4','기타'];
+  for (const klass of order) {
+    const rec = entriesBy.get(klass);
+    if (!rec) continue;
+    const sections = [ ['byung','병당'], ['eung','응당'], ['off','Day-off'] ];
+    for (const [key, label] of sections) {
+      const list = rec[key] || [];
+      if (list.length === 0) continue;
+      for (const e of list) {
+        rows.push([ klass, label, e.name, signed(Number(e.delta) || 0) ]);
+      }
+    }
+    rows.push(['','','','']);
+  }
+  return rows;
+}
+
 function endDateOf(result) {
   if (result.endDate) return result.endDate;
   const start = new Date(result.startDate);
@@ -842,6 +877,12 @@ function parseVacationRanges(text) {
     }
   }
   return map;
+}
+
+function getPriorDayDutyFromUI() {
+  const byung = (priorByungInput?.value || '').trim();
+  const eung = (priorEungInput?.value || '').trim();
+  return { byung, eung };
 }
 
 function renderWeeklyHours(result) {
@@ -922,7 +963,7 @@ function renderCarryoverStats(result, opts = {}) {
   wrap.className = 'weekly-report carryover-section';
   const title = document.createElement('div');
   title.className = 'legend title';
-  title.textContent = 'Stat-to-Pass (다음달로 넘길 보정치)';
+  title.textContent = '다음달 반영';
   wrap.appendChild(title);
 
   // 준비: 인원/연차

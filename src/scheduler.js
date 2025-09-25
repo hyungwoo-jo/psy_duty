@@ -10,7 +10,7 @@ import { addDays, isWorkday, weekKey, fmtDate, rangeDays, weekKeyByMode, allWeek
 
 // preference: 'any' | 'weekday' | 'weekend'
 // optimization: 'off' | 'fast' | 'medium' | 'strong'
-export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMode = 'calendar', employees, holidays = [], unavailableByName = {}, vacationDaysByName = {}, optimization = 'medium', weekdaySlots = 1, weekendSlots = 2, timeBudgetMs = 2000 }) {
+export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMode = 'calendar', employees, holidays = [], unavailableByName = {}, vacationDaysByName = {}, priorDayDuty = { byung: '', eung: '' }, optimization = 'medium', weekdaySlots = 1, weekendSlots = 2, timeBudgetMs = 2000 }) {
   if (!employees || employees.length < 2) {
     throw new Error('근무자는 2명 이상 필요합니다.');
   }
@@ -57,6 +57,19 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
     unavailable: new Set(unavailableByName[(typeof emp === 'string' ? emp : emp.name)] || []),
     vacationDays: new Set(vacationDaysByName[(typeof emp === 'string' ? emp : emp.name)] || []),
   }));
+  // 전일 당직(시작일 전날) 사전 반영: 다음날(start)은 Day-off(주말/공휴일 전날이면 정규/당직 모두 제외)
+  (function applyPriorDayDutyOff() {
+    try {
+      const prev = addDays(start, -1);
+      const prevIsWork = isWorkday(prev, holidaySet);
+      const startKey = fmtDate(start);
+      const names = new Set([priorDayDuty?.byung || '', priorDayDuty?.eung || ''].filter(Boolean));
+      for (const p of people) {
+        if (!names.has(p.name)) continue;
+        if (prevIsWork) p.regularOffDayKeys.add(startKey); else p.offDayKeys.add(startKey);
+      }
+    } catch {}
+  })();
 
   // 날짜 키 ↔ 인덱스 매핑
   const keyToIndex = new Map(days.map((d, i) => [fmtDate(d), i]));
@@ -544,6 +557,17 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
       }));
 
       const warningsSim = [];
+      // Seed prior-day off constraints into sim based on current people state
+      for (let idx = 0; idx < sim.length; idx += 1) {
+        const src = people[idx];
+        if (!src) continue;
+        if (src.offDayKeys && src.offDayKeys.size) {
+          for (const k of src.offDayKeys) sim[idx].offDayKeys.add(k);
+        }
+        if (src.regularOffDayKeys && src.regularOffDayKeys.size) {
+          for (const k of src.regularOffDayKeys) sim[idx].regularOffDayKeys.add(k);
+        }
+      }
       for (let d = 0; d < days.length; d += 1) {
         const date = days[d];
         const wk = weekKeyByMode(date, start, weekMode);
