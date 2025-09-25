@@ -95,8 +95,12 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
     const sEu = sumEligEuClass.get(k) || 0;
     const tBy = sBy > 0 ? (slots.by * (eligBy.get(p.id) || 0) / sBy) : (slots.by / Math.max(1, people.filter(pp => pp.klass === k).length));
     const tEu = sEu > 0 ? (slots.eu * (eligEu.get(p.id) || 0) / sEu) : (slots.eu / Math.max(1, people.filter(pp => pp.klass === k).length));
-    capBy.set(p.id, Math.ceil(tBy) + 2);
-    capEu.set(p.id, Math.ceil(tEu) + 2);
+    let capByVal = Math.ceil(tBy) + 2;
+    let capEuVal = Math.ceil(tEu) + 2;
+    if (p.klass === 'R2') capByVal = Math.min(capByVal, Math.ceil(tBy) + 1); // R2: 병당 더 타이트(±1)
+    if (p.klass === 'R1') capEuVal = Math.min(capEuVal, Math.ceil(tEu) + 1); // R1: 응당 더 타이트(±1)
+    capBy.set(p.id, capByVal);
+    capEu.set(p.id, capEuVal);
   }
   // 전일 당직(시작일 전날) 사전 반영: 다음날(start)은 Day-off(주말/공휴일 전날이면 정규/당직 모두 제외)
   (function applyPriorDayDutyOff() {
@@ -719,6 +723,7 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
       let weeklyClassVar = 0;    // 연차 내 주별 duty 횟수 분산
       let countClassVar = 0;     // 연차 내 총 당직 횟수 분산 (최우선)
       let vacFavorPen = 0;       // 휴가자 과도 배치 억제 페널티
+      let weekendBoundPen = 0;   // 주말 당직 편차 ±1 초과 페널티
       let roleBoundPen = 0;      // (R3 제외) 역할별 개인 편차 ±2 초과 페널티
       for (const [klass, arr] of byClass) {
         if (!klass) continue;
@@ -739,6 +744,12 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
           const arrW = arr.map((p) => p._wkDuty[wk] || 0);
           const mw = arrW.reduce((a,b)=>a+b,0) / (arrW.length || 1);
           weeklyClassVar += arrW.reduce((acc,v)=>acc+(v-mw)*(v-mw),0);
+        }
+        // 주말 당직(weekendDutyCount) 편차: 평균 대비 ±1 초과분 페널티
+        {
+          const wends = arr.map((p) => p.weekendDutyCount || 0);
+          const mwend = wends.reduce((a,b)=>a+b,0) / (wends.length || 1);
+          for (const v of wends) weekendBoundPen += Math.max(0, Math.abs(v - mwend) - 1);
         }
         // (R3 제외) 개인별 병당/응당 편차가 ±2를 넘으면 초과분에 패널티(hinge)
         if (klass !== 'R3') {
@@ -780,7 +791,7 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
           }
         }
       }
-      const WEIGHTS = { total: 0.0, smooth: 0.0, countClass: 9.0, roleClass: 3.0, hoursClass: 0.1, weeklyClass: 0.4, softCnt: 2.0, softAmt: 0.5, preferMiss: 1.5, vacFavor: 4.0, roleBound: 6.0 };
+      const WEIGHTS = { total: 0.0, smooth: 0.0, countClass: 9.0, roleClass: 3.0, hoursClass: 0.1, weeklyClass: 0.4, softCnt: 2.0, softAmt: 0.5, preferMiss: 1.5, vacFavor: 4.0, roleBound: 6.0, weekendBound: 4.0 };
       const objective = WEIGHTS.total * varTotal
         + WEIGHTS.smooth * smooth
         + WEIGHTS.countClass * countClassVar
@@ -791,6 +802,7 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
         + WEIGHTS.softAmt * softExceedAmount
         + WEIGHTS.preferMiss * preferMiss
         + WEIGHTS.vacFavor * vacFavorPen
+        + WEIGHTS.weekendBound * weekendBoundPen
         + WEIGHTS.roleBound * roleBoundPen;
       return { valid: true, objective, peopleSim: sim, warnings: warningsSim };
     }
