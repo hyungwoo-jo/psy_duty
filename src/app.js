@@ -55,12 +55,22 @@ document.querySelector('#clear-holidays')?.addEventListener('click', () => { hol
 let lastResult = null;
 
 function setDefaultStartMonday() {
+  // 오늘 기준 "다음달의 첫 월요일"로 설정
   const today = new Date();
-  const day = today.getDay();
-  const toNextMonday = ((8 - day) % 7) || 7;
-  const nextMonday = new Date(today);
-  nextMonday.setDate(today.getDate() + toNextMonday);
-  startInput.valueAsDate = nextMonday;
+  const firstOfNextMonth = new Date(today.getFullYear(), today.getMonth() + 1, 1);
+  const dow = firstOfNextMonth.getDay(); // 0=Sun..6=Sat
+  const offsetToMonday = (8 - dow) % 7; // Mon=1 -> 0, Sun=0 -> 1, ...
+  const firstMonday = new Date(firstOfNextMonth);
+  firstMonday.setDate(1 + offsetToMonday);
+  try {
+    startInput.valueAsDate = firstMonday;
+  } catch {
+    // Fallback to yyyy-mm-dd string
+    const y = firstMonday.getFullYear();
+    const m = String(firstMonday.getMonth() + 1).padStart(2, '0');
+    const d = String(firstMonday.getDate()).padStart(2, '0');
+    startInput.value = `${y}-${m}-${d}`;
+  }
 }
 
 function parseEmployees(text) {
