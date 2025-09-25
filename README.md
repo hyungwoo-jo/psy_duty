@@ -74,11 +74,3 @@
 - 개인별로 캘린더를 분리하고 싶다면, 먼저 비어있는 보조 캘린더를 만들어 그 캘린더로 가져오세요.
 - 같은 일정을 여러 번 가져오면 중복될 수 있습니다. 가져오기 전 기존 동일 월의 이벤트를 확인해 주세요.
 
-## (관리자) ZIP으로 바로 릴리스 만들기 스크립트
-앱에서 받은 ZIP으로 태그까지 자동 생성하여 GitHub Release를 발행하고, Actions로 `/ics/YYYY-MM/vN/` 경로에 자동 배포합니다.
-
-- 요구사항: gh CLI 설치 및 로그인(`gh auth login`), 리포지토리 write 권한
-- 사용법:
-  - ZIP만: `scripts/release_from_zip.sh duty-roster-YYYY-MM-vN.zip`
-  - ZIP+Excel: `scripts/release_from_zip.sh duty-roster-YYYY-MM-vN.zip duty-roster-YYYY-MM-vN.xls`
-- 동작: 파일명에서 `YYYY-MM-vN` 파싱 → 태그 `ics-YYYY-MM-vN` 생성 → 릴리스 발행(자산 업로드) → Actions가 `/ics/YYYY-MM/vN/`에 전개
