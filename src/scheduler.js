@@ -239,7 +239,7 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
       regularsAlreadyApplied = true; // 평가 단계에서 정규(+11h×2) 이미 반영됨
       meta.elapsedMs = Date.now() - startTs;
     } else {
-      for (const p of people) { collectWeeklyWarnings(p, warnings, WEEK_MAX); collectTotalWarning(p, warnings, p.totalCapHours); }
+      for (const p of people) { collectWeeklyWarnings(p, warnings, WEEK_SOFT_MAX); collectTotalWarning(p, warnings, p.totalCapHours); }
     }
   } else {
     // (정규 반영 전) 일단 경고는 보류하고, 정규 반영 후 재계산
@@ -398,7 +398,7 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
     if (stage.vacation.length) reasons.push(['휴가 주 제외', stage.vacation.length]);
     if (stage.special.length) reasons.push(['소아턴 수요일 제외', stage.special.length]);
     if (stage.overWeek_today.length) reasons.push([`주간상한 초과(당일>${WEEK_HARD_MAX}h)`, stage.overWeek_today.length]);
-    if (stage.overWeek_next.length) reasons.push([`주간상한 초과(다음날>${WEEK_MAX}h)`, stage.overWeek_next.length]);
+    if (stage.overWeek_next.length) reasons.push([`주간상한 초과(다음날>${WEEK_HARD_MAX}h)`, stage.overWeek_next.length]);
     if (stage.overTotal.length) reasons.push(['총합상한 초과', stage.overTotal.length]);
     return { person: null, reasons };
   }
