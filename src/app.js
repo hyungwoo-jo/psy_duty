@@ -355,7 +355,7 @@ function onExportXlsx() {
   // ICS Links separate sheet
   const linksRows = [ [ { v: '이름', style: 'Header' }, { v: 'ICS', style: 'Header' } ] ];
   const base = getComputedIcsBase();
-  const monthKey = dominantMonthKey();
+  const monthKey = monthKeyFromResult(lastResult) || dominantMonthKey();
   const version = (icsVersionInput?.value || '').trim() || 'v1';
   linksRows.push([ { v: '월', style: 'Header' }, monthKey || '-' ]);
   linksRows.push([ { v: '버전', style: 'Header' }, version ]);
@@ -804,6 +804,20 @@ function buildPreviousAdjustRows(result, prev) {
     rows.push(['','','','']);
   }
   return rows;
+}
+
+function monthKeyFromResult(result) {
+  try {
+    const counts = new Map();
+    for (const d of result.schedule || []) {
+      const dt = new Date(d.date);
+      const key = `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}`;
+      counts.set(key, (counts.get(key) || 0) + 1);
+    }
+    let best = ''; let max = -1;
+    for (const [k, v] of counts) { if (v > max) { max = v; best = k; } }
+    return best;
+  } catch { return ''; }
 }
 
 function endDateOf(result) {

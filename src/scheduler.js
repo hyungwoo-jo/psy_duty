@@ -355,6 +355,14 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
     }
     pool = afterSpecial;
 
+    // 다음날에 강제 배치(preAssigned)가 있는 경우, 오늘 배제해서 연속 방지
+    const nextForced = new Set((preAssigned[index + 1] || []).filter(Boolean).map((x) => x.id));
+    if (nextForced.size) {
+      const afterNext = [];
+      for (const p of pool) (nextForced.has(p.id) ? stage.offday : afterNext).push(p);
+      pool = afterNext;
+    }
+
     // 오늘 주간 상한 체크
     const afterToday = [];
     for (const p of pool) {
