@@ -791,7 +791,19 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
           }
         }
       }
-      const WEIGHTS = { total: 0.0, smooth: 0.0, countClass: 9.0, roleClass: 3.0, hoursClass: 0.1, weeklyClass: 0.4, softCnt: 2.0, softAmt: 0.5, preferMiss: 1.5, vacFavor: 4.0, roleBound: 6.0, weekendBound: 4.0 };
+      // 주 80h 이상은 강한 페널티(가능하면 회피)
+      let hard80Count = 0;
+      let hard80Amount = 0;
+      for (const p of sim) {
+        for (const wk of weekKeys) {
+          const v = p.weeklyHours[wk] || 0;
+          if (v >= 80 - 1e-9) { // 80h 이상
+            hard80Count += 1;
+            hard80Amount += Math.max(0, v - 80);
+          }
+        }
+      }
+      const WEIGHTS = { total: 0.0, smooth: 0.0, countClass: 9.0, roleClass: 3.0, hoursClass: 0.1, weeklyClass: 0.4, softCnt: 2.0, softAmt: 0.5, hard80Cnt: 12.0, hard80Amt: 3.0, preferMiss: 1.5, vacFavor: 4.0, roleBound: 6.0, weekendBound: 4.0 };
       const objective = WEIGHTS.total * varTotal
         + WEIGHTS.smooth * smooth
         + WEIGHTS.countClass * countClassVar
@@ -800,6 +812,8 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
         + WEIGHTS.weeklyClass * weeklyClassVar
         + WEIGHTS.softCnt * softExceedCount
         + WEIGHTS.softAmt * softExceedAmount
+        + WEIGHTS.hard80Cnt * hard80Count
+        + WEIGHTS.hard80Amt * hard80Amount
         + WEIGHTS.preferMiss * preferMiss
         + WEIGHTS.vacFavor * vacFavorPen
         + WEIGHTS.weekendBound * weekendBoundPen
