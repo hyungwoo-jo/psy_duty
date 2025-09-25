@@ -292,6 +292,90 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
 
   // 최종 duties를 기준으로 정규/당직 시간 재계산 (원천 ledger에서 파생)
   rebuildFromLedger();
+  // 사후 보정: 주 80h 이상 해소를 위한 제한적 스왑(병당 위주)
+  (function tryRepair80() {
+    let changed = false;
+    let guard = 0;
+    const idxById = new Map(people.map((p, i) => [p.id, i]));
+    while (guard++ < 30) {
+      // 주별 80h 이상 찾기
+      const offenders = [];
+      for (const p of people) {
+        for (const wk of Object.keys(p.weeklyHours)) {
+          const v = p.weeklyHours[wk] || 0;
+          if (v >= 80 - 1e-9) offenders.push({ id: p.id, wk, hours: v });
+        }
+      }
+      if (offenders.length === 0) break;
+      let fixedAny = false;
+      // byungCount 맵(개인별 병당 횟수)
+      const byCount = new Map();
+      for (let i = 0; i < schedule.length; i += 1) {
+        const duty = (schedule[i].duties || [])[0];
+        if (duty) byCount.set(duty.id, (byCount.get(duty.id) || 0) + 1);
+      }
+      for (const off of offenders) {
+        const p = people[idxById.get(off.id)];
+        if (!p) continue;
+        // 해당 주의 날짜 인덱스 수집
+        const indices = [];
+        for (let i = 0; i < schedule.length; i += 1) {
+          if (weekKeyByMode(schedule[i].date, start, weekMode) === off.wk) indices.push(i);
+        }
+        // 해당 주에 본인이 병당으로 선 당직 날짜(주말 먼저: 21h 절감)
+        const candDays = indices.filter((i) => (schedule[i].duties[0]?.id === p.id))
+          .sort((a, b) => {
+            const wa = isWorkday(schedule[a].date, holidaySet) ? 0 : 1;
+            const wb = isWorkday(schedule[b].date, holidaySet) ? 0 : 1;
+            return wb - wa; // 주말 먼저
+          });
+        // 같은 연차 후보 목록
+        const klass = p.klass;
+        const classPeople = people.filter((q) => q.klass === klass && q.id !== p.id);
+        // 병당 슬롯 교체 시도
+        for (const di of candDays) {
+          const d = schedule[di].date; const key = fmtDate(d);
+          const addDuty = isWorkday(d, holidaySet) ? 13.5 : 21;
+          // 스왑 후보 탐색
+          let swapped = false;
+          for (const q of classPeople) {
+            // 당일 당직 불가/희망/휴가/이미 배정/연속 금지 체크
+            if ((q.dutyUnavailable && q.dutyUnavailable.has(key)) || (q.dayoffWish && q.dayoffWish.has(key))) continue;
+            if (q.vacationDays && q.vacationDays.has(key)) continue;
+            if (schedule[di].duties.find((x) => x?.id === q.id)) continue;
+            // 연속 금지
+            if (di > 0 && schedule[di - 1].duties.find((x) => x?.id === q.id)) continue;
+            if (di + 1 < schedule.length && schedule[di + 1].duties.find((x) => x?.id === q.id)) continue;
+            // 스왑 후 주간 80 체크
+            const qWeekly = (q.weeklyHours[off.wk] || 0) + addDuty;
+            const pWeekly = (p.weeklyHours[off.wk] || 0) - addDuty;
+            if (qWeekly >= 80 - 1e-9) continue;
+            // 병당 편차 ±2 이내 유지(양쪽)
+            const byP = (byCount.get(p.id) || 0) - 1;
+            const byQ = (byCount.get(q.id) || 0) + 1;
+            // 클래스 평균(병당)
+            const classIds = people.filter((x) => x.klass === klass).map((x) => x.id);
+            let sum = 0; for (const id of classIds) sum += (byCount.get(id) || 0) + (id === p.id ? -1 : 0) + (id === q.id ? +1 : 0);
+            const avg = sum / classIds.length;
+            if (Math.abs(byP - avg) > 2 + 1e-9) continue;
+            if (Math.abs(byQ - avg) > 2 + 1e-9) continue;
+            // 스왑 수행
+            schedule[di].duties[0] = { id: q.id, name: q.name };
+            byCount.set(p.id, byP); byCount.set(q.id, byQ);
+            swapped = true; changed = true; fixedAny = true;
+            break;
+          }
+          if (swapped) break;
+        }
+      }
+      if (!fixedAny) break;
+      // 재계산
+      rebuildFromLedger();
+    }
+    if (changed) {
+      // after repair, leave schedule/people updated
+    }
+  })();
   // 경고/총합 재계산
   warnings.length = 0;
   for (const p of people) { collectWeeklyWarnings(p, warnings, WEEK_SOFT_MAX); collectTotalWarning(p, warnings, p.totalCapHours); }
