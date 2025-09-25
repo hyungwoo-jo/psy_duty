@@ -51,6 +51,8 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
     dutyCount: 0,
     weekdayDutyCount: 0,
     weekendDutyCount: 0,
+    _byung: 0,
+    _eung: 0,
     lastDutyIndex: -999,
     offDayKeys: new Set(), // 24h 당직 다음날: 당직/정규 제외
     regularOffDayKeys: new Set(), // 평일 당직 다음날: 정규 제외
@@ -58,6 +60,44 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
     dayoffWish: new Set(dayoffWishByName[(typeof emp === 'string' ? emp : emp.name)] || []),
     vacationDays: new Set(vacationDaysByName[(typeof emp === 'string' ? emp : emp.name)] || []),
   }));
+
+  // 역할별 기대치 기반 소프트 캡 계산 (비 R3): 기대치 = (연차·역할 슬롯 수) × (가용일 비율), 캡 = ceil(기대)+2
+  const classSlots = new Map();
+  const ensureClass = (k) => { if (!classSlots.has(k)) classSlots.set(k, { by: 0, eu: 0 }); return classSlots.get(k); };
+  for (const d of days) {
+    ensureClass(requiredClassFor(d, holidaySet, 0)).by += 1;
+    ensureClass(requiredClassFor(d, holidaySet, 1)).eu += 1;
+  }
+  const eligBy = new Map(); const eligEu = new Map();
+  for (const p of people) { eligBy.set(p.id, 0); eligEu.set(p.id, 0); }
+  for (const d of days) {
+    const key = fmtDate(d);
+    for (const p of people) {
+      if (p.vacationDays && p.vacationDays.has(key)) continue;
+      const disallow = (p.dutyUnavailable && p.dutyUnavailable.has(key)) || (p.dayoffWish && p.dayoffWish.has(key));
+      if (!disallow && requiredClassFor(d, holidaySet, 0) === p.klass) eligBy.set(p.id, (eligBy.get(p.id) || 0) + 1);
+      if (!disallow && requiredClassFor(d, holidaySet, 1) === p.klass) eligEu.set(p.id, (eligEu.get(p.id) || 0) + 1);
+    }
+  }
+  const sumEligByClass = new Map(); const sumEligEuClass = new Map();
+  for (const p of people) {
+    const k = p.klass || '';
+    if (!sumEligByClass.has(k)) sumEligByClass.set(k, 0);
+    if (!sumEligEuClass.has(k)) sumEligEuClass.set(k, 0);
+    sumEligByClass.set(k, sumEligByClass.get(k) + (eligBy.get(p.id) || 0));
+    sumEligEuClass.set(k, sumEligEuClass.get(k) + (eligEu.get(p.id) || 0));
+  }
+  const capBy = new Map(); const capEu = new Map();
+  for (const p of people) {
+    const k = p.klass || '';
+    const slots = classSlots.get(k) || { by: 0, eu: 0 };
+    const sBy = sumEligByClass.get(k) || 0;
+    const sEu = sumEligEuClass.get(k) || 0;
+    const tBy = sBy > 0 ? (slots.by * (eligBy.get(p.id) || 0) / sBy) : (slots.by / Math.max(1, people.filter(pp => pp.klass === k).length));
+    const tEu = sEu > 0 ? (slots.eu * (eligEu.get(p.id) || 0) / sEu) : (slots.eu / Math.max(1, people.filter(pp => pp.klass === k).length));
+    capBy.set(p.id, Math.ceil(tBy) + 2);
+    capEu.set(p.id, Math.ceil(tEu) + 2);
+  }
   // 전일 당직(시작일 전날) 사전 반영: 다음날(start)은 Day-off(주말/공휴일 전날이면 정규/당직 모두 제외)
   (function applyPriorDayDutyOff() {
     try {
@@ -150,7 +190,7 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
       const todayKey = fmtDate(date);
       // 기본 제약 체크: 해당일 휴가/불가/중복/연속 금지
       if (p.vacationDays && p.vacationDays.has(todayKey)) { preAssignFailures.push(`${p.name} ${key} (전일 휴가)`); continue; }
-      if (p.unavailable && p.unavailable.has(todayKey)) { preAssignFailures.push(`${p.name} ${key} (전일 불가)`); continue; }
+      if ((p.dutyUnavailable && p.dutyUnavailable.has(todayKey)) || (p.dayoffWish && p.dayoffWish.has(todayKey))) { preAssignFailures.push(`${p.name} ${key} (전일 불가)`); continue; }
       if (pi > 0) {
         const prevPrev = preAssigned[pi - 1] || [];
         if (prevPrev[0]?.id === p.id || prevPrev[1]?.id === p.id) { preAssignFailures.push(`${p.name} ${key} (연속 당직 불가)`); continue; }
