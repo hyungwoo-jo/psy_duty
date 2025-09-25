@@ -10,7 +10,7 @@ import { addDays, isWorkday, weekKey, fmtDate, rangeDays, weekKeyByMode, allWeek
 
 // preference: 'any' | 'weekday' | 'weekend'
 // optimization: 'off' | 'fast' | 'medium' | 'strong'
-export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMode = 'calendar', employees, holidays = [], unavailableByName = {}, vacationDaysByName = {}, priorDayDuty = { byung: '', eung: '' }, optimization = 'medium', weekdaySlots = 1, weekendSlots = 2, timeBudgetMs = 2000 }) {
+export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMode = 'calendar', employees, holidays = [], dutyUnavailableByName = {}, dayoffWishByName = {}, vacationDaysByName = {}, priorDayDuty = { byung: '', eung: '' }, optimization = 'medium', weekdaySlots = 1, weekendSlots = 2, timeBudgetMs = 2000 }) {
   if (!employees || employees.length < 2) {
     throw new Error('근무자는 2명 이상 필요합니다.');
   }
@@ -54,7 +54,8 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
     lastDutyIndex: -999,
     offDayKeys: new Set(), // 24h 당직 다음날: 당직/정규 제외
     regularOffDayKeys: new Set(), // 평일 당직 다음날: 정규 제외
-    unavailable: new Set(unavailableByName[(typeof emp === 'string' ? emp : emp.name)] || []),
+    dutyUnavailable: new Set(dutyUnavailableByName[(typeof emp === 'string' ? emp : emp.name)] || []),
+    dayoffWish: new Set(dayoffWishByName[(typeof emp === 'string' ? emp : emp.name)] || []),
     vacationDays: new Set(vacationDaysByName[(typeof emp === 'string' ? emp : emp.name)] || []),
   }));
   // 전일 당직(시작일 전날) 사전 반영: 다음날(start)은 Day-off(주말/공휴일 전날이면 정규/당직 모두 제외)
@@ -73,10 +74,10 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
 
   // 날짜 키 ↔ 인덱스 매핑
   const keyToIndex = new Map(days.map((d, i) => [fmtDate(d), i]));
-  // Weekday 불가일 → 전날 당직 선호(소프트 제약)로 전환
+  // Day-off 희망일(평일) → 전날 당직 선호(소프트 제약)로 전환
   const preferByIndex = Array.from({ length: days.length }, () => new Set());
   for (const p of people) {
-    for (const key of (p.unavailable || new Set())) {
+    for (const key of (p.dayoffWish || new Set())) {
       const d = new Date(key);
       if (Number.isNaN(d.getTime())) continue;
       // 해당 날짜가 평일(근무일)인 경우: 전날 당직을 선호로 표시
@@ -129,11 +130,11 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
   // 평일 불가일 → 전날 강제 배치(가능 시) 사전 처리
   const preAssigned = Array.from({ length: days.length }, () => [null, null]);
   const preAssignFailures = [];
-  (function preassignFromUnavailable() {
+  (function preassignFromDayoffWish() {
     // 수집: (prevIndex, person)
     const reqs = [];
     for (const p of people) {
-      for (const key of (p.unavailable || new Set())) {
+      for (const key of (p.dayoffWish || new Set())) {
         const d = new Date(key);
         if (!isWorkday(d, holidaySet)) continue; // 평일만 대상
         const prevKey = fmtDate(addDays(d, -1));
@@ -340,7 +341,7 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
     pool = afterPref;
 
     const afterUnavail = [];
-    for (const p of pool) ((p.unavailable && p.unavailable.has(todayKey)) ? stage.unavailable : afterUnavail).push(p);
+    for (const p of pool) (((p.dutyUnavailable && p.dutyUnavailable.has(todayKey)) || (p.dayoffWish && p.dayoffWish.has(todayKey))) ? stage.unavailable : afterUnavail).push(p);
     pool = afterUnavail;
 
     const afterVacation = [];
@@ -593,7 +594,7 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
           const needK = requiredClassFor(date, holidaySet, s);
           if (p.klass !== needK) return { valid: false };
           if (p.offDayKeys.has(todayKey)) return { valid: false };
-          if (p.unavailable && p.unavailable.has(todayKey)) return { valid: false };
+          if ((p.dutyUnavailable && p.dutyUnavailable.has(todayKey)) || (p.dayoffWish && p.dayoffWish.has(todayKey))) return { valid: false };
           if (p.vacationDays && p.vacationDays.has(fmtDate(date))) return { valid: false };
           // 소아턴(R3) 수요일 제외
           if (date.getDay() === 3 && p.klass === 'R3' && p.pediatric) return { valid: false };
@@ -631,11 +632,10 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
         if (!isWorkday(date, holidaySet)) continue;
         const wk = weekKeyByMode(date, start, weekMode);
         const key = fmtDate(date);
-        const pool = sim
+      const pool = sim
           .filter((p) => !(p.vacationDays && p.vacationDays.has(fmtDate(date))))
           .filter((p) => !(p.regularOffDayKeys && p.regularOffDayKeys.has(key)))
-          .filter((p) => !(p.offDayKeys && p.offDayKeys.has(key)))
-          .filter((p) => !(p.unavailable && p.unavailable.has(key)));
+          .filter((p) => !(p.offDayKeys && p.offDayKeys.has(key)));
         for (const p of pool) { p.weeklyHours[wk] = (p.weeklyHours[wk] || 0) + 8; }
       }
 
@@ -796,8 +796,7 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
       const pool = people
         .filter((p) => !(p.vacationDays && p.vacationDays.has(key)))
         .filter((p) => !(p.regularOffDayKeys && p.regularOffDayKeys.has(key)))
-        .filter((p) => !(p.offDayKeys && p.offDayKeys.has(key)))
-        .filter((p) => !(p.unavailable && p.unavailable.has(key)));
+        .filter((p) => !(p.offDayKeys && p.offDayKeys.has(key)));
       for (const p of pool) p.weeklyHours[wk] = (p.weeklyHours[wk] || 0) + 8;
       cell.regulars = [];
     }

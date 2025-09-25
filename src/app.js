@@ -14,6 +14,7 @@ const report = document.querySelector('#report');
 const roster = document.querySelector('#roster');
 const holidaysInput = document.querySelector('#holidays');
 const unavailableInput = document.querySelector('#unavailable');
+const dayoffWishInput = document.querySelector('#dayoff-wish');
 const vacationsInput = document.querySelector('#vacations');
 const priorByungInput = document.querySelector('#prior-byung');
 const priorEungInput = document.querySelector('#prior-eung');
@@ -146,21 +147,22 @@ function onGenerate() {
         const employees = parseEmployees(employeesInput.value);
 
         const holidays = [...parseHolidays(holidaysInput.value)];
-        const unavailable = parseUnavailable(unavailableInput.value);
+        const dutyUnavailable = parseUnavailable(unavailableInput.value);
+        const dayoffWish = parseUnavailable(dayoffWishInput?.value || '');
         const optimization = 'strong';
         const budgetMs = getTimeBudgetMsFromQuery();
         const weekMode = 'calendar';
         const weekdaySlots = 2; // 병당 1 + 응당 1
         const vacations = parseVacationRanges(vacationsInput.value);
         const prior = getPriorDayDutyFromUI();
-        let result = generateSchedule({ startDate, endDate, weeks, weekMode, employees, holidays, unavailableByName: Object.fromEntries(unavailable), vacationDaysByName: Object.fromEntries(vacations), priorDayDuty: prior, optimization, weekdaySlots, weekendSlots: 2, timeBudgetMs: budgetMs });
+        let result = generateSchedule({ startDate, endDate, weeks, weekMode, employees, holidays, dutyUnavailableByName: Object.fromEntries(dutyUnavailable), dayoffWishByName: Object.fromEntries(dayoffWish), vacationDaysByName: Object.fromEntries(vacations), priorDayDuty: prior, optimization, weekdaySlots, weekendSlots: 2, timeBudgetMs: budgetMs });
         // 자동 재시도: 주 70h 초과가 있으면 최대 5회까지 재시도
         let best = result;
         let bestEx = countSoftExceed(result, 70);
         if (bestEx > 0) {
           for (let i = 1; i <= 5; i += 1) {
             setLoading(true, `당직표 생성 중… (재시도 ${i}/5)`);
-            const cand = generateSchedule({ startDate, endDate, weeks, weekMode, employees, holidays, unavailableByName: Object.fromEntries(unavailable), vacationDaysByName: Object.fromEntries(vacations), priorDayDuty: prior, optimization, weekdaySlots, weekendSlots: 2, timeBudgetMs: budgetMs });
+            const cand = generateSchedule({ startDate, endDate, weeks, weekMode, employees, holidays, dutyUnavailableByName: Object.fromEntries(dutyUnavailable), dayoffWishByName: Object.fromEntries(dayoffWish), vacationDaysByName: Object.fromEntries(vacations), priorDayDuty: prior, optimization, weekdaySlots, weekendSlots: 2, timeBudgetMs: budgetMs });
             const ex = countSoftExceed(cand, 70);
             if (ex === 0) { best = cand; bestEx = 0; break; }
             if (ex < bestEx) { best = cand; bestEx = ex; }
@@ -184,12 +186,14 @@ function onGenerate() {
 
         // 경고: 불가일/휴가 이름 확인
         const names = new Set(employees.map((e) => e.name));
-        const unknownUnavail = [...unavailable.keys()].filter((n) => !names.has(n));
+        const unknownUnavail = [...dutyUnavailable.keys()].filter((n) => !names.has(n));
+        const unknownDayoff = [...dayoffWish.keys()].filter((n) => !names.has(n));
         const unknownVacs = [...vacations.keys()].filter((n) => !names.has(n));
         const priorNames = [prior.byung, prior.eung].filter(Boolean);
         const unknownPrior = priorNames.filter((n) => !names.has(n));
         const notes = [];
-        if (unknownUnavail.length) notes.push(`불가일 이름 불일치: ${unknownUnavail.join(', ')}`);
+        if (unknownUnavail.length) notes.push(`당직 불가일 이름 불일치: ${unknownUnavail.join(', ')}`);
+        if (unknownDayoff.length) notes.push(`Day-off 희망일 이름 불일치: ${unknownDayoff.join(', ')}`);
         if (unknownVacs.length) notes.push(`휴가 이름 불일치: ${unknownVacs.join(', ')}`);
         if (unknownPrior.length) notes.push(`전일 당직 이름 불일치: ${unknownPrior.join(', ')}`);
         messages.textContent = notes.join(' | ');
@@ -214,16 +218,15 @@ function onGenerate() {
 }
 
 function renderSummary(result) {
-  const totalUnderfill = result.schedule.filter((d) => d.underfilled).length;
-  const warn = result.warnings.length || totalUnderfill > 0;
+  // 미충원(underfill) 표기는 숨기고, 경고만 표시
+  const warn = result.warnings.length > 0;
 
   const lines = [];
   lines.push(`기간: ${result.startDate} ~ ${endDateOf(result)}`);
   lines.push(`근무자 수: ${result.employees.length}명`);
   const back = result.employees.find((e) => e.emergency) || result.schedule.find((d) => d.back)?.back;
   if (back) lines.push(`응급 back: ${back.name || back}`);
-  lines.push(`미충원 일수: ${totalUnderfill}일`);
-  lines.push(warn ? `주의: ${[...result.warnings].join(' | ') || '충원 인원 부족일 존재'}` : '검증: 제약 내에서 생성됨');
+  lines.push(warn ? `주의: ${[...result.warnings].join(' | ') || '검토 필요한 항목 존재'}` : '검증: 제약 내에서 생성됨');
 
   // 상세 비교는 개인별 통계 테이블에서 연차 내 기준으로 확인
 
