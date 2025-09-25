@@ -58,10 +58,12 @@ function setDefaultStartMonday() {
   // 오늘 기준 "다음달의 첫 월요일"로 설정
   const today = new Date();
   const firstOfNextMonth = new Date(today.getFullYear(), today.getMonth() + 1, 1);
-  const dow = firstOfNextMonth.getDay(); // 0=Sun..6=Sat
-  const offsetToMonday = (8 - dow) % 7; // Mon=1 -> 0, Sun=0 -> 1, ...
+  // 안전하게 while 루프로 확정(타임존/수식 혼동 방지)
   const firstMonday = new Date(firstOfNextMonth);
-  firstMonday.setDate(1 + offsetToMonday);
+  firstMonday.setHours(12, 0, 0, 0); // DST/타임존 영향 최소화
+  while (firstMonday.getDay() !== 1) {
+    firstMonday.setDate(firstMonday.getDate() + 1);
+  }
   try {
     startInput.valueAsDate = firstMonday;
   } catch {
