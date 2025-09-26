@@ -376,6 +376,133 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
       // after repair, leave schedule/people updated
     }
   })();
+
+  // 사후 보정 2: Day-off 편차 완화(같은 연차, 같은 슬롯 간 스왑)
+  (function tryRepairDayoffBalance() {
+    let guard = 0;
+    const idxById = new Map(people.map((p, i) => [p.id, i]));
+
+    const isNextWorkday = (i) => {
+      if (i + 1 >= schedule.length) return false;
+      return isWorkday(schedule[i + 1].date, holidaySet);
+    };
+
+    // day-off 카운트 계산
+    function computeDayOffMap() {
+      const map = new Map();
+      for (let i = 0; i < schedule.length - 1; i += 1) {
+        if (!isNextWorkday(i)) continue;
+        for (const d of (schedule[i].duties || [])) {
+          map.set(d.id, (map.get(d.id) || 0) + 1);
+        }
+      }
+      return map;
+    }
+
+    function classAvgBy(slot, klass, deltaOverrides = new Map()) {
+      // 평균 병당/응당 카운트(스왑 검증용)
+      const ids = people.filter((p) => p.klass === klass).map((p) => p.id);
+      let sum = 0; for (const id of ids) sum += ((slot === 0 ? byCount.get(id) : euCount.get(id)) || 0) + (deltaOverrides.get(id) || 0);
+      return sum / Math.max(1, ids.length);
+    }
+
+    while (guard++ < 50) {
+      const dayOffMap = computeDayOffMap();
+      // 연차별로 고/저 선택
+      const byClass = new Map();
+      for (const p of people) {
+        const k = p.klass || '';
+        if (!byClass.has(k)) byClass.set(k, []);
+        byClass.get(k).push({ id: p.id, name: p.name, count: dayOffMap.get(p.id) || 0 });
+      }
+      let improved = false;
+      for (const [klass, arr] of byClass) {
+        if (!klass) continue;
+        const sorted = arr.slice().sort((a, b) => b.count - a.count);
+        if (sorted.length < 2) continue;
+        const high = sorted[0];
+        const low = sorted[sorted.length - 1];
+        if ((high.count - low.count) <= 1 + 1e-9) continue; // 이미 균형
+
+        // 병당 우선 스왑
+        const trySlots = [0, 1];
+        for (const slot of trySlots) {
+          // high가 slot에 배정된 날 중에서 다음날 평일(true)인 날 i 찾기
+          const idxHigh = [];
+          for (let i = 0; i < schedule.length; i += 1) {
+            const duty = (schedule[i].duties || [])[slot];
+            if (duty?.id === high.id && isNextWorkday(i)) idxHigh.push(i);
+          }
+          if (idxHigh.length === 0) continue;
+          const idxLow = [];
+          for (let j = 0; j < schedule.length; j += 1) {
+            const duty = (schedule[j].duties || [])[slot];
+            if (duty?.id === low.id && !isNextWorkday(j)) idxLow.push(j); // day-off 줄이려면 false가 유리
+          }
+          if (idxLow.length === 0) continue;
+
+          // 빠른 검증을 위해 카운트 맵 준비
+          const byCount = new Map(); const euCount = new Map();
+          for (let i = 0; i < schedule.length; i += 1) {
+            const d0 = (schedule[i].duties || [])[0]; if (d0) byCount.set(d0.id, (byCount.get(d0.id) || 0) + 1);
+            const d1 = (schedule[i].duties || [])[1]; if (d1) euCount.set(d1.id, (euCount.get(d1.id) || 0) + 1);
+          }
+
+          let found = false;
+          outer:
+          for (const i of idxHigh) {
+            for (const j of idxLow) {
+              if (i === j) continue;
+              // 강제 배치 보호
+              if ((preAssigned[i] && preAssigned[i][slot]) || (preAssigned[j] && preAssigned[j][slot])) continue;
+              const dayI = schedule[i].date; const keyI = fmtDate(dayI);
+              const dayJ = schedule[j].date; const keyJ = fmtDate(dayJ);
+              const addI = isWorkday(dayI, holidaySet) ? 13.5 : 21;
+              const addJ = isWorkday(dayJ, holidaySet) ? 13.5 : 21;
+              const pHigh = people[idxById.get(high.id)];
+              const pLow = people[idxById.get(low.id)];
+              // 당일 제약(불가/희망/휴가)
+              const disIforLow = (pLow.dutyUnavailable && pLow.dutyUnavailable.has(keyI)) || (pLow.dayoffWish && pLow.dayoffWish.has(keyI)) || (pLow.vacationDays && pLow.vacationDays.has(keyI));
+              const disJforHigh = (pHigh.dutyUnavailable && pHigh.dutyUnavailable.has(keyJ)) || (pHigh.dayoffWish && pHigh.dayoffWish.has(keyJ)) || (pHigh.vacationDays && pHigh.vacationDays.has(keyJ));
+              if (disIforLow || disJforHigh) continue;
+              // 연속 금지 체크
+              const hasPrev = (idx, id) => (idx > 0) && (schedule[idx - 1].duties || []).some((x) => x?.id === id);
+              const hasNext = (idx, id) => (idx + 1 < schedule.length) && (schedule[idx + 1].duties || []).some((x) => x?.id === id);
+              if (hasPrev(i, pLow.id) || hasNext(i, pLow.id)) continue;
+              if (hasPrev(j, pHigh.id) || hasNext(j, pHigh.id)) continue;
+              // 주간 75h 하드 체크
+              const wkI = weekKeyByMode(dayI, start, weekMode);
+              const wkJ = weekKeyByMode(dayJ, start, weekMode);
+              const highNewI = (pHigh.weeklyHours[wkI] || 0) - addI;
+              const highNewJ = (pHigh.weeklyHours[wkJ] || 0) + addJ;
+              const lowNewI  = (pLow.weeklyHours[wkI]  || 0) + addI;
+              const lowNewJ  = (pLow.weeklyHours[wkJ]  || 0) - addJ;
+              if (highNewI < -1e-9 || highNewJ > 75 + 1e-9) continue;
+              if (lowNewJ < -1e-9 || lowNewI  > 75 + 1e-9) continue;
+              // 역할 편차 ±3 방지(요청)
+              const delta = new Map();
+              delta.set(high.id, (slot === 0 ? -1 : 0) + (slot === 1 ? -1 : 0));
+              delta.set(low.id,  (slot === 0 ? +1 : 0) + (slot === 1 ? +1 : 0));
+              const avg = classAvgBy(slot, klass, delta);
+              const newHighRole = (slot === 0 ? (byCount.get(high.id) || 0) - 1 : (euCount.get(high.id) || 0) - 1);
+              const newLowRole  = (slot === 0 ? (byCount.get(low.id)  || 0) + 1 : (euCount.get(low.id)  || 0) + 1);
+              if (Math.abs(newHighRole - avg) > 2 + 1e-9) continue;
+              if (Math.abs(newLowRole  - avg) > 2 + 1e-9) continue;
+              // 스왑 적용
+              const dutyI = schedule[i].duties[slot];
+              const dutyJ = schedule[j].duties[slot];
+              schedule[i].duties[slot] = { id: dutyJ.id, name: dutyJ.name };
+              schedule[j].duties[slot] = { id: dutyI.id, name: dutyI.name };
+              rebuildFromLedger();
+              improved = true; found = true;
+              break outer;
+            }
+          }
+        }
+      }
+      if (!improved) break;
+    }
+  })();
   // 경고/총합 재계산
   warnings.length = 0;
   for (const p of people) { collectWeeklyWarnings(p, warnings, WEEK_SOFT_MAX); collectTotalWarning(p, warnings, p.totalCapHours); }
