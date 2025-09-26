@@ -1124,11 +1124,13 @@ function renderCarryoverStats(result, opts = {}) {
   title.textContent = '다음달 반영';
   wrap.appendChild(title);
 
+  const empById = new Map(result.employees.map((e) => [e.id, e]));
   const groups = new Map();
-  for (const e of result.employees) {
-    const k = e.klass || '기타';
+  for (const s of result.stats) { // Use result.stats for consistency
+    const emp = empById.get(s.id) || {};
+    const k = emp.klass || '기타';
     if (!groups.has(k)) groups.set(k, []);
-    groups.get(k).push(e);
+    groups.get(k).push(s);
   }
 
   const { byungCount, eungCount, dayOff } = computeRoleAndOffCounts(result);
