@@ -399,6 +399,18 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
       return map;
     }
 
+    // 역할 카운트 맵(전역)과 재계산기
+    const byCount = new Map();
+    const euCount = new Map();
+    function recomputeRoleCounts() {
+      byCount.clear(); euCount.clear();
+      for (let i = 0; i < schedule.length; i += 1) {
+        const d0 = (schedule[i].duties || [])[0]; if (d0) byCount.set(d0.id, (byCount.get(d0.id) || 0) + 1);
+        const d1 = (schedule[i].duties || [])[1]; if (d1) euCount.set(d1.id, (euCount.get(d1.id) || 0) + 1);
+      }
+    }
+    recomputeRoleCounts();
+
     function classAvgBy(slot, klass, deltaOverrides = new Map()) {
       // 평균 병당/응당 카운트(스왑 검증용)
       const ids = people.filter((p) => p.klass === klass).map((p) => p.id);
@@ -440,13 +452,6 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
             if (duty?.id === low.id && !isNextWorkday(j)) idxLow.push(j); // day-off 줄이려면 false가 유리
           }
           if (idxLow.length === 0) continue;
-
-          // 빠른 검증을 위해 카운트 맵 준비
-          const byCount = new Map(); const euCount = new Map();
-          for (let i = 0; i < schedule.length; i += 1) {
-            const d0 = (schedule[i].duties || [])[0]; if (d0) byCount.set(d0.id, (byCount.get(d0.id) || 0) + 1);
-            const d1 = (schedule[i].duties || [])[1]; if (d1) euCount.set(d1.id, (euCount.get(d1.id) || 0) + 1);
-          }
 
           let found = false;
           outer:
