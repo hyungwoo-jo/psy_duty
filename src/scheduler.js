@@ -10,7 +10,7 @@ import { addDays, isWorkday, weekKey, fmtDate, rangeDays, weekKeyByMode, allWeek
 
 // preference: 'any' | 'weekday' | 'weekend'
 // optimization: 'off' | 'fast' | 'medium' | 'strong'
-export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMode = 'calendar', employees, holidays = [], dutyUnavailableByName = {}, dayoffWishByName = {}, vacationDaysByName = {}, priorDayDuty = { byung: '', eung: '' }, optimization = 'medium', weekdaySlots = 1, weekendSlots = 2, timeBudgetMs = 2000 }) {
+export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMode = 'calendar', employees, holidays = [], dutyUnavailableByName = {}, dayoffWishByName = {}, vacationDaysByName = {}, priorDayDuty = { byung: '', eung: '' }, optimization = 'medium', weekdaySlots = 1, weekendSlots = 2, timeBudgetMs = 2000, roleHardcapMode = 'strict' }) {
   if (!employees || employees.length < 2) {
     throw new Error('근무자는 2명 이상 필요합니다.');
   }
@@ -32,6 +32,15 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
   // 주당 상한: 72h는 소프트(권장) 상한, 75h를 하드 상한으로 드물게만 허용
   const WEEK_SOFT_MAX = 72;
   const WEEK_HARD_MAX = 75;
+  const hardcapMode = roleHardcapMode === 'relaxed' ? 'relaxed' : 'strict';
+  const CLASS_KEY_NONE = '__none__';
+
+  const klassKey = (klass) => (klass && klass.trim()) ? klass : CLASS_KEY_NONE;
+  const roleDeviationLimit = (klass) => {
+    if (!klass || klass === CLASS_KEY_NONE) return Number.POSITIVE_INFINITY;
+    if (klass === 'R3') return 2;
+    return hardcapMode === 'relaxed' ? 2 : 1;
+  };
 
   // 주 단위 키 추출 (월요일 시작)
   const weekKeys = allWeekKeysInRange(start, totalDays, weekMode);
@@ -60,6 +69,36 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
     dayoffWish: new Set(dayoffWishByName[(typeof emp === 'string' ? emp : emp.name)] || []),
     vacationDays: new Set(vacationDaysByName[(typeof emp === 'string' ? emp : emp.name)] || []),
   }));
+
+  const membersByClass = new Map();
+  for (const p of people) {
+    const key = klassKey(p.klass);
+    if (!membersByClass.has(key)) membersByClass.set(key, []);
+    membersByClass.get(key).push(p);
+  }
+
+  function getRoleCount(person, slot) {
+    return slot === 0 ? (person._byung || 0) : (person._eung || 0);
+  }
+
+  function violatesRoleCap(klass, slot, adjustments = new Map()) {
+    const limit = roleDeviationLimit(klass);
+    if (!Number.isFinite(limit) || limit === Number.POSITIVE_INFINITY) return false;
+    const members = membersByClass.get(klassKey(klass)) || [];
+    if (!members.length) return false;
+    let total = 0;
+    for (const member of members) {
+      const base = getRoleCount(member, slot);
+      total += base + (adjustments.get(member.id) || 0);
+    }
+    const avg = total / members.length;
+    for (const member of members) {
+      const base = getRoleCount(member, slot);
+      const val = base + (adjustments.get(member.id) || 0);
+      if (Math.abs(val - avg) > limit + 1e-9) return true;
+    }
+    return false;
+  }
 
   // 역할별 기대치 기반 소프트 캡 계산 (비 R3): 기대치 = (연차·역할 슬롯 수) × (가용일 비율), 캡 = ceil(기대)+2
   const classSlots = new Map();
@@ -95,12 +134,12 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
     const sEu = sumEligEuClass.get(k) || 0;
     const tBy = sBy > 0 ? (slots.by * (eligBy.get(p.id) || 0) / sBy) : (slots.by / Math.max(1, people.filter(pp => pp.klass === k).length));
     const tEu = sEu > 0 ? (slots.eu * (eligEu.get(p.id) || 0) / sEu) : (slots.eu / Math.max(1, people.filter(pp => pp.klass === k).length));
-    let capByVal = Math.ceil(tBy) + 2;
-    let capEuVal = Math.ceil(tEu) + 2;
-    // 비 R3는 병/응 모두 기대치+1로 타이트하게(±1 목표)
-    if (p.klass !== 'R3') {
-      capByVal = Math.min(capByVal, Math.ceil(tBy) + 1);
-      capEuVal = Math.min(capEuVal, Math.ceil(tEu) + 1);
+    const limit = roleDeviationLimit(k);
+    let capByVal = Number.POSITIVE_INFINITY;
+    let capEuVal = Number.POSITIVE_INFINITY;
+    if (Number.isFinite(limit)) {
+      capByVal = Math.max(Math.ceil(tBy), Math.floor(tBy) + limit);
+      capEuVal = Math.max(Math.ceil(tEu), Math.floor(tEu) + limit);
     }
     capBy.set(p.id, capByVal);
     capEu.set(p.id, capEuVal);
@@ -353,15 +392,16 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
             const qWeekly = (q.weeklyHours[off.wk] || 0) + addDuty;
             const pWeekly = (p.weeklyHours[off.wk] || 0) - addDuty;
             if (qWeekly >= 80 - 1e-9) continue;
-            // 병당 편차 ±2 이내 유지(양쪽)
+            // 병당 편차 하드캡(연차별)
             const byP = (byCount.get(p.id) || 0) - 1;
             const byQ = (byCount.get(q.id) || 0) + 1;
             // 클래스 평균(병당)
             const classIds = people.filter((x) => x.klass === klass).map((x) => x.id);
             let sum = 0; for (const id of classIds) sum += (byCount.get(id) || 0) + (id === p.id ? -1 : 0) + (id === q.id ? +1 : 0);
             const avg = sum / classIds.length;
-            if (Math.abs(byP - avg) > 2 + 1e-9) continue;
-            if (Math.abs(byQ - avg) > 2 + 1e-9) continue;
+            const limit = roleDeviationLimit(klass);
+            if (Math.abs(byP - avg) > limit + 1e-9) continue;
+            if (Math.abs(byQ - avg) > limit + 1e-9) continue;
             // 스왑 수행
             schedule[di].duties[0] = { id: q.id, name: q.name };
             byCount.set(p.id, byP); byCount.set(q.id, byQ);
@@ -494,8 +534,9 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
               const avg = classAvgBy(slot, klass, delta);
               const newHighRole = (slot === 0 ? (byCount.get(high.id) || 0) - 1 : (euCount.get(high.id) || 0) - 1);
               const newLowRole  = (slot === 0 ? (byCount.get(low.id)  || 0) + 1 : (euCount.get(low.id)  || 0) + 1);
-              if (Math.abs(newHighRole - avg) > 2 + 1e-9) continue;
-              if (Math.abs(newLowRole  - avg) > 2 + 1e-9) continue;
+              const limit = roleDeviationLimit(klass);
+              if (Math.abs(newHighRole - avg) > limit + 1e-9) continue;
+              if (Math.abs(newLowRole  - avg) > limit + 1e-9) continue;
               // 스왑 적용
               const dutyI = schedule[i].duties[slot];
               const dutyJ = schedule[j].duties[slot];
@@ -529,7 +570,7 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
     employees: people.map((p) => ({ id: p.id, name: p.name, preference: p.preference, klass: p.klass, pediatric: !!p.pediatric })),
     endDate: endDate ? fmtDate(addDays(start, totalDays - 1)) : null,
     schedule,
-    config: { weekMode, weekdaySlots: Math.max(1, Math.min(2, weekdaySlots)), weekendSlots: Math.max(1, weekendSlots) },
+    config: { weekMode, weekdaySlots: Math.max(1, Math.min(2, weekdaySlots)), weekendSlots: Math.max(1, weekendSlots), roleHardcapMode: hardcapMode },
     warnings: preAssignFailures.length ? (warnings.concat([`불가일 전일 당직 배치 실패: ${preAssignFailures.join(' / ')}`])) : warnings,
     stats: people.map((p, i) => ({
       id: p.id,
@@ -580,7 +621,7 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
     }
 
     // 단계별 필터로 사유 수집
-    const stage = { offday: [], klass: [], preference: [], unavailable: [], vacation: [], special: [], overWeek_today: [], overWeek_next: [], overTotal: [] };
+    const stage = { offday: [], klass: [], preference: [], unavailable: [], vacation: [], special: [], overWeek_today: [], overWeek_next: [], overTotal: [], roleCap: [] };
     let pool = people.filter((p) => !takenIds.has(p.id));
 
     // 요구 연차(klass) 필터
@@ -641,11 +682,9 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
     // 역할별 소프트 캡: (R3 제외) 기대+2 초과자는 우선 제외
     const afterCap = [];
     for (const p of pool) {
-      if (p.klass !== 'R3') {
-        const cur = (slot === 0) ? (p._byung || 0) : (p._eung || 0);
-        const cap = (slot === 0) ? (capBy.get(p.id) || Infinity) : (capEu.get(p.id) || Infinity);
-        if (cur >= cap) { stage.special.push(p); continue; }
-      }
+      const cur = (slot === 0) ? (p._byung || 0) : (p._eung || 0);
+      const cap = (slot === 0) ? (capBy.get(p.id) || Infinity) : (capEu.get(p.id) || Infinity);
+      if (cur >= cap) { stage.roleCap.push(p); continue; }
       afterCap.push(p);
     }
     pool = afterCap;
@@ -671,6 +710,8 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
       const deltaTotal = (isTodayWorkday ? 13.5 : 21);
       const totalCap = p.totalCapHours ?? (72 * weeks); // fallback
       if (totalNow + deltaTotal > totalCap + 1e-9) { stage.overTotal.push(p); continue; }
+      const adj = new Map([[p.id, 1]]);
+      if (violatesRoleCap(p.klass, slot, adj)) { stage.roleCap.push(p); continue; }
       return { person: p, reasons: [] };
     }
 
@@ -684,10 +725,11 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
     if (stage.overWeek_today.length) reasons.push([`주간상한 초과(당일>${WEEK_HARD_MAX}h)`, stage.overWeek_today.length]);
     if (stage.overWeek_next.length) reasons.push([`주간상한 초과(다음날>${WEEK_HARD_MAX}h)`, stage.overWeek_next.length]);
     if (stage.overTotal.length) reasons.push(['총합상한 초과', stage.overTotal.length]);
+    if (stage.roleCap.length) reasons.push(['역할 편차 하드캡', stage.roleCap.length]);
     return { person: null, reasons };
   }
 
-  function applyAssignment({ person, index, date, holidaySet }) {
+  function applyAssignment({ person, index, date, holidaySet, slot }) {
     const wk = weekKeyByMode(date, start, weekMode);
     const isTodayWorkday = isWorkday(date, holidaySet);
     const addDuty = isTodayWorkday ? 13.5 : 21;
@@ -696,6 +738,8 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
     person.dutyCount += 1;
     if (isTodayWorkday) person.weekdayDutyCount += 1; else person.weekendDutyCount += 1;
     person.lastDutyIndex = index;
+    if (slot === 0) person._byung = (person._byung || 0) + 1;
+    else if (slot === 1) person._eung = (person._eung || 0) + 1;
 
     // 다음날 오프 처리
     const next = addDays(date, 1);
@@ -841,6 +885,31 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
       }));
 
       const warningsSim = [];
+      const simMembersByClass = new Map();
+      for (const p of sim) {
+        const key = klassKey(p.klass);
+        if (!simMembersByClass.has(key)) simMembersByClass.set(key, []);
+        simMembersByClass.get(key).push(p);
+      }
+      const simRoleCount = (person, slot) => (slot === 0 ? (person._byung || 0) : (person._eung || 0));
+      function violatesSimRoleCap(klass, slot, adjustments = new Map()) {
+        const limit = roleDeviationLimit(klass);
+        if (!Number.isFinite(limit) || limit === Number.POSITIVE_INFINITY) return false;
+        const members = simMembersByClass.get(klassKey(klass)) || [];
+        if (!members.length) return false;
+        let total = 0;
+        for (const member of members) {
+          const base = simRoleCount(member, slot);
+          total += base + (adjustments.get(member.id) || 0);
+        }
+        const avg = total / members.length;
+        for (const member of members) {
+          const base = simRoleCount(member, slot);
+          const val = base + (adjustments.get(member.id) || 0);
+          if (Math.abs(val - avg) > limit + 1e-9) return true;
+        }
+        return false;
+      }
       // Seed prior-day off constraints into sim based on current people state
       for (let idx = 0; idx < sim.length; idx += 1) {
         const src = people[idx];
@@ -881,6 +950,8 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
           const addDuty = isTodayWorkday ? 13.5 : 21;
           const simToday = (p.weeklyHours[wk] ?? 0) + addDuty;
           if (simToday > WEEK_HARD_MAX + 1e-9) return { valid: false };
+          const deltaMap = new Map([[p.id, 1]]);
+          if (violatesSimRoleCap(p.klass, s, deltaMap)) return { valid: false };
           // 적용
           p.weeklyHours[wk] = Math.max(0, simToday);
           p.dutyCount += 1;
@@ -970,7 +1041,7 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
           const mwend = wends.reduce((a,b)=>a+b,0) / (wends.length || 1);
           for (const v of wends) weekendBoundPen += Math.max(0, Math.abs(v - mwend) - 1);
         }
-        // (R3 제외) 개인별 병당/응당 편차가 ±2를 넘으면 초과분에 패널티(hinge)
+        // (R3 제외) 개인별 병당/응당 편차가 1을 넘으면 초과분에 패널티(hinge)
         if (klass !== 'R3') {
           for (const p of arr) {
             const by = p._byung || 0;
@@ -1061,13 +1132,16 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
       p.dutyCount = 0; p.weekdayDutyCount = 0; p.weekendDutyCount = 0;
       p._dutyHoursAccum = 0; p.offDayKeys = new Set(); p.regularOffDayKeys = new Set();
       p.lastDutyIndex = -999;
+      p._byung = 0;
+      p._eung = 0;
     }
     // 1) 당직 시간 누적 및 오프로 인한 상태 설정(주말/공휴일)
     for (let i = 0; i < schedule.length; i += 1) {
       const cell = schedule[i];
       const d = cell.date; const wk = weekKeyByMode(d, start, weekMode);
       const isWkday = isWorkday(d, holidaySet);
-      for (const duty of cell.duties) {
+      for (let s = 0; s < cell.duties.length; s += 1) {
+        const duty = cell.duties[s];
         const p = people.find((x) => x.id === duty.id);
         if (!p) continue;
         const add = isWkday ? 13.5 : 21;
@@ -1076,6 +1150,8 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
         p.dutyCount += 1;
         if (isWkday) p.weekdayDutyCount += 1; else p.weekendDutyCount += 1;
         p.lastDutyIndex = i;
+        if (s === 0) p._byung = (p._byung || 0) + 1;
+        else if (s === 1) p._eung = (p._eung || 0) + 1;
         if (!isWkday) {
           const nKey = fmtDate(addDays(d, 1));
           p.offDayKeys.add(nKey);

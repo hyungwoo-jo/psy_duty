@@ -23,6 +23,8 @@ const loadingOverlay = document.querySelector('#loading-overlay');
 const loadingTextEl = loadingOverlay ? loadingOverlay.querySelector('.loading-text') : null;
 const icsVersionInput = document.querySelector('#ics-version');
 const icsPreview = document.querySelector('#ics-preview');
+const hardcapToggle = document.querySelector('#role-hardcap-toggle');
+let roleHardcapMode = hardcapToggle?.dataset.mode === 'relaxed' ? 'relaxed' : 'strict';
 // 최적화 선택 UI 제거: 기본 strong
 // 주 계산 모드 옵션 제거: 달력 기준(월–일) 고정
 // 당직 슬롯 고정: 병당 1, 응당 1
@@ -36,6 +38,7 @@ exportIcsBtn?.addEventListener('click', onExportIcs);
 // 직원 목록 변경 시 보정 UI 갱신
 employeesInput.addEventListener('input', debounce(renderPreviousStatsUI, 250));
 window.addEventListener('DOMContentLoaded', renderPreviousStatsUI);
+window.addEventListener('DOMContentLoaded', updateHardcapToggleLabel);
 window.addEventListener('DOMContentLoaded', () => {
   // GitHub Pages 경로 자동 추정(비어있을 때만)
   try {
@@ -49,11 +52,23 @@ window.addEventListener('DOMContentLoaded', () => {
   weeksInput.addEventListener(ev, updateIcsPreview);
   icsVersionInput?.addEventListener(ev, updateIcsPreview);
 });
+hardcapToggle?.addEventListener('click', () => {
+  roleHardcapMode = (roleHardcapMode === 'strict') ? 'relaxed' : 'strict';
+  updateHardcapToggleLabel();
+});
 // 공휴일 도우미 버튼
 document.querySelector('#load-kr-holidays')?.addEventListener('click', () => loadKRHolidays({ merge: true }));
 document.querySelector('#clear-holidays')?.addEventListener('click', () => { holidaysInput.value = ''; });
 
 let lastResult = null;
+
+function updateHardcapToggleLabel() {
+  if (!hardcapToggle) return;
+  const relaxed = roleHardcapMode === 'relaxed';
+  hardcapToggle.dataset.mode = roleHardcapMode;
+  hardcapToggle.textContent = relaxed ? '완화 모드 (±2 허용)' : '기본 (±1)';
+  hardcapToggle.setAttribute('aria-pressed', relaxed ? 'true' : 'false');
+}
 
 function setDefaultStartMonday() {
   // 오늘 기준 "다음달의 첫 월요일"로 설정
@@ -155,14 +170,14 @@ function onGenerate() {
         const weekdaySlots = 2; // 병당 1 + 응당 1
         const vacations = parseVacationRanges(vacationsInput.value);
         const prior = getPriorDayDutyFromUI();
-        let result = generateSchedule({ startDate, endDate, weeks, weekMode, employees, holidays, dutyUnavailableByName: Object.fromEntries(dutyUnavailable), dayoffWishByName: Object.fromEntries(dayoffWish), vacationDaysByName: Object.fromEntries(vacations), priorDayDuty: prior, optimization, weekdaySlots, weekendSlots: 2, timeBudgetMs: budgetMs });
+        let result = generateSchedule({ startDate, endDate, weeks, weekMode, employees, holidays, dutyUnavailableByName: Object.fromEntries(dutyUnavailable), dayoffWishByName: Object.fromEntries(dayoffWish), vacationDaysByName: Object.fromEntries(vacations), priorDayDuty: prior, optimization, weekdaySlots, weekendSlots: 2, timeBudgetMs: budgetMs, roleHardcapMode });
         // 자동 재시도: 주 70h 초과가 있으면 최대 5회까지 재시도
         let best = result;
         let bestEx = countSoftExceed(result, 72);
         if (bestEx > 0) {
           for (let i = 1; i <= 5; i += 1) {
             setLoading(true, `당직표 생성 중… (재시도 ${i}/5)`);
-            const cand = generateSchedule({ startDate, endDate, weeks, weekMode, employees, holidays, dutyUnavailableByName: Object.fromEntries(dutyUnavailable), dayoffWishByName: Object.fromEntries(dayoffWish), vacationDaysByName: Object.fromEntries(vacations), priorDayDuty: prior, optimization, weekdaySlots, weekendSlots: 2, timeBudgetMs: budgetMs });
+            const cand = generateSchedule({ startDate, endDate, weeks, weekMode, employees, holidays, dutyUnavailableByName: Object.fromEntries(dutyUnavailable), dayoffWishByName: Object.fromEntries(dayoffWish), vacationDaysByName: Object.fromEntries(vacations), priorDayDuty: prior, optimization, weekdaySlots, weekendSlots: 2, timeBudgetMs: budgetMs, roleHardcapMode });
             const ex = countSoftExceed(cand, 72);
             if (ex === 0) { best = cand; bestEx = 0; break; }
             if (ex < bestEx) { best = cand; bestEx = ex; }
