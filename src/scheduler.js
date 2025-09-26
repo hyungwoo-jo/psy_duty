@@ -527,14 +527,8 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
               const lowNewJ  = (pLow.weeklyHours[wkJ]  || 0) - addJ;
               if (highNewI < -1e-9 || highNewJ > 75 + 1e-9) continue;
               if (lowNewJ < -1e-9 || lowNewI  > 75 + 1e-9) continue;
-              // 역할 편차 ±3 방지(요청)
-              const delta = new Map();
-              delta.set(high.id, (slot === 0 ? -1 : 0) + (slot === 1 ? -1 : 0));
-              delta.set(low.id,  (slot === 0 ? +1 : 0) + (slot === 1 ? +1 : 0));
-              const newHighRole = (slot === 0 ? (byCount.get(high.id) || 0) - 1 : (euCount.get(high.id) || 0) - 1);
-              const newLowRole  = (slot === 0 ? (byCount.get(low.id)  || 0) + 1 : (euCount.get(low.id)  || 0) + 1);
-              // day-off 편차 완화 스왑은 역할 하드캡 대신 day-off 균형을 우선한다.
-              // role deviation은 이후 전역 하드캡 체크에서 다뤄지므로 여기서는 제한하지 않는다.
+              // 역할 편차 하드캡 검사는 이후 전역 재계산 단계에서 수행한다.
+              // day-off 편차 완화 스왑은 역할 균형보다 day-off 균형을 우선시한다.
               // 스왑 적용
               const dutyI = schedule[i].duties[slot];
               const dutyJ = schedule[j].duties[slot];

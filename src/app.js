@@ -53,14 +53,18 @@ window.addEventListener('DOMContentLoaded', () => {
   icsVersionInput?.addEventListener(ev, updateIcsPreview);
 });
 hardcapToggle?.addEventListener('click', () => {
-  roleHardcapMode = (roleHardcapMode === 'strict') ? 'relaxed' : 'strict';
-  updateHardcapToggleLabel();
+  setRoleHardcapMode(roleHardcapMode === 'strict' ? 'relaxed' : 'strict');
 });
 // 공휴일 도우미 버튼
 document.querySelector('#load-kr-holidays')?.addEventListener('click', () => loadKRHolidays({ merge: true }));
 document.querySelector('#clear-holidays')?.addEventListener('click', () => { holidaysInput.value = ''; });
 
 let lastResult = null;
+
+function setRoleHardcapMode(mode) {
+  roleHardcapMode = mode;
+  updateHardcapToggleLabel();
+}
 
 function updateHardcapToggleLabel() {
   if (!hardcapToggle) return;
@@ -170,17 +174,50 @@ function onGenerate() {
         const weekdaySlots = 2; // 병당 1 + 응당 1
         const vacations = parseVacationRanges(vacationsInput.value);
         const prior = getPriorDayDutyFromUI();
-        let result = generateSchedule({ startDate, endDate, weeks, weekMode, employees, holidays, dutyUnavailableByName: Object.fromEntries(dutyUnavailable), dayoffWishByName: Object.fromEntries(dayoffWish), vacationDaysByName: Object.fromEntries(vacations), priorDayDuty: prior, optimization, weekdaySlots, weekendSlots: 2, timeBudgetMs: budgetMs, roleHardcapMode });
-        // 자동 재시도: 주 70h 초과가 있으면 최대 5회까지 재시도
-        let best = result;
-        let bestEx = countSoftExceed(result, 72);
-        if (bestEx > 0) {
-          for (let i = 1; i <= 5; i += 1) {
-            setLoading(true, `당직표 생성 중… (재시도 ${i}/5)`);
-            const cand = generateSchedule({ startDate, endDate, weeks, weekMode, employees, holidays, dutyUnavailableByName: Object.fromEntries(dutyUnavailable), dayoffWishByName: Object.fromEntries(dayoffWish), vacationDaysByName: Object.fromEntries(vacations), priorDayDuty: prior, optimization, weekdaySlots, weekendSlots: 2, timeBudgetMs: budgetMs, roleHardcapMode });
-            const ex = countSoftExceed(cand, 72);
-            if (ex === 0) { best = cand; bestEx = 0; break; }
-            if (ex < bestEx) { best = cand; bestEx = ex; }
+        const runSchedule = (mode) => {
+          const args = { startDate, endDate, weeks, weekMode, employees, holidays, dutyUnavailableByName: Object.fromEntries(dutyUnavailable), dayoffWishByName: Object.fromEntries(dayoffWish), vacationDaysByName: Object.fromEntries(vacations), priorDayDuty: prior, optimization, weekdaySlots, weekendSlots: 2, timeBudgetMs: budgetMs, roleHardcapMode: mode };
+          let base = generateSchedule(args);
+          let best = base;
+          let bestEx = countSoftExceed(base, 72);
+          if (bestEx > 0) {
+            for (let i = 1; i <= 5; i += 1) {
+              setLoading(true, `당직표 생성 중… (재시도 ${i}/5)`);
+              const cand = generateSchedule(args);
+              const ex = countSoftExceed(cand, 72);
+              if (ex === 0) { best = cand; bestEx = 0; break; }
+              if (ex < bestEx) { best = cand; bestEx = ex; }
+            }
+          }
+          return { schedule: best, softExceed: bestEx };
+        };
+
+        const needsUnderfillFix = (result) => result.schedule.some((day) => (day.duties?.length || 0) < 2 || day.underfilled);
+
+        let { schedule: best, softExceed: bestEx } = runSchedule(roleHardcapMode);
+
+        if (needsUnderfillFix(best) && roleHardcapMode === 'strict') {
+          let repaired = false;
+          for (let retry = 1; retry <= 2; retry += 1) {
+            const rerun = runSchedule('strict');
+            if (!needsUnderfillFix(rerun.schedule)) {
+              best = rerun.schedule;
+              bestEx = rerun.softExceed;
+              repaired = true;
+              break;
+            }
+          }
+          if (!repaired) {
+            const fallback = runSchedule('relaxed');
+            if (!needsUnderfillFix(fallback.schedule)) {
+              best = fallback.schedule;
+              bestEx = fallback.softExceed;
+              if (roleHardcapMode !== 'relaxed') {
+                setRoleHardcapMode('relaxed');
+                appendMessage('strict 하드캡으로 빈 슬롯이 발생해 완화 모드(±2)로 자동 전환했습니다.');
+              }
+            } else {
+              throw new Error('빈 슬롯을 채울 수 없습니다. 하드캡을 완화하거나 입력 제약을 확인해주세요.');
+            }
           }
         }
 
@@ -194,7 +231,7 @@ function onGenerate() {
 
         if (bestEx > 0) {
           const warnMsg = `주의: 일부 주의 72h 초과가 해소되지 않았습니다 (셀 ${bestEx}개). 설정을 조정하거나 인원을 늘려주세요.`;
-          messages.textContent = messages.textContent ? (messages.textContent + ' | ' + warnMsg) : warnMsg;
+          appendMessage(warnMsg);
           try { alert(warnMsg); } catch {}
         }
         if (exportXlsxBtn) exportXlsxBtn.disabled = false;
@@ -211,7 +248,7 @@ function onGenerate() {
         if (unknownDayoff.length) notes.push(`Day-off 희망일 이름 불일치: ${unknownDayoff.join(', ')}`);
         if (unknownVacs.length) notes.push(`휴가 이름 불일치: ${unknownVacs.join(', ')}`);
         if (unknownPrior.length) notes.push(`전일 당직 이름 불일치: ${unknownPrior.join(', ')}`);
-        messages.textContent = notes.join(' | ');
+        notes.forEach((msg) => appendMessage(msg));
       } catch (err) {
         console.error(err);
         messages.textContent = err.message || String(err);
@@ -934,6 +971,11 @@ function getTimeBudgetMsFromQuery() {
 
 function signed(n) {
   return (n > 0 ? '+' : '') + n;
+}
+
+function appendMessage(msg) {
+  if (!msg) return;
+  messages.textContent = messages.textContent ? `${messages.textContent} | ${msg}` : msg;
 }
 
 function countSoftExceed(result, limit = 72) {
