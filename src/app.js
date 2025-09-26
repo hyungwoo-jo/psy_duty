@@ -786,20 +786,20 @@ function buildCarryoverRows(result, prev) {
       const prevEuByName = new Map(prevEuList.map((e) => [e.name, Number(e.delta) || 0]));
       const curBy = people.map((p) => ({ id: p.id, name: p.name, count: Number(byungCount.get(p.id) || 0) + (prevByByName.get(p.name) || 0) }));
       const curEu = people.map((p) => ({ id: p.id, name: p.name, count: Number(eungCount.get(p.id) || 0) + (prevEuByName.get(p.name) || 0) }));
-      // 다음달 반영(역할): '이번달+지난달 반영'을 기준으로, 중앙값(중간값) 대비 부족분만 +로 표시
-      const byDeltas = computeMedianOneSidedDeltas(curBy, vacPrefer);
-      const euDeltas = computeMedianOneSidedDeltas(curEu, vacPrefer);
+      // 다음달 반영(역할): '이번달+지난달 반영'을 기준으로, 중앙값 대비 signed(−/0/+)로 표시
+      const byDeltas = computeMedianSignedDeltas(curBy);
+      const euDeltas = computeMedianSignedDeltas(curEu);
       if (byDeltas.length === 0) rows.push([klass, '병당', '-', '-']);
       else for (const d of byDeltas) rows.push([ klass, '병당', d.name, { v: signed(d.delta), style: d.delta > 0 ? 'Pos' : 'Neg' } ]);
       if (euDeltas.length === 0) rows.push([klass, '응당', '-', '-']);
       else for (const d of euDeltas) rows.push([ klass, '응당', d.name, { v: signed(d.delta), style: d.delta > 0 ? 'Pos' : 'Neg' } ]);
     }
-    // Day-off: 중앙값 기준(+ 방향) 보정 — 지난달 반영 포함
+    // Day-off: 중앙값 기준 signed(−/0/+) — 지난달 반영 포함
     {
       const prevList = (prev.entriesByClassRole.get(klass)?.off) || [];
       const prevByName = new Map(prevList.map((e) => [e.name, Number(e.delta) || 0]));
       const counts = people.map((p) => ({ id: p.id, name: p.name, count: Number(dayOff.get(p.id) || 0) + (prevByName.get(p.name) || 0) }));
-      const deltas = computeMedianOneSidedDeltas(counts, vacPrefer);
+      const deltas = computeMedianSignedDeltas(counts);
       if (deltas.length === 0) rows.push([klass, 'Day-off', '-', '-']);
       else for (const d of deltas) rows.push([ klass, 'Day-off', d.name, { v: signed(d.delta), style: d.delta > 0 ? 'Pos' : 'Neg' } ]);
     }
@@ -852,6 +852,28 @@ function computeMedianOneSidedDeltas(entries, preferSet = new Set()) {
     const need = Math.max(0, median - Number(e.count || 0));
     if (need > 0) out.push({ id: e.id, name: e.name, delta: need });
   }
+  return out;
+}
+
+// 중앙값 기준 signed(−/0/+): delta = count − median
+function computeMedianSignedDeltas(entries) {
+  if (!entries.length) return [];
+  const countsOnly = entries.map((e) => Number(e.count || 0)).sort((a,b)=>a-b);
+  const mid = Math.floor(countsOnly.length / 2);
+  const median = (countsOnly.length % 2 === 1)
+    ? countsOnly[mid]
+    : Math.floor((countsOnly[mid - 1] + countsOnly[mid]) / 2);
+  const out = [];
+  for (const e of entries) {
+    const cnt = Number(e.count || 0);
+    const delta = cnt - median; // 예: 3,4,5 -> −1,0,+1
+    if (delta !== 0) out.push({ id: e.id, name: e.name, delta });
+  }
+  out.sort((a,b) => {
+    const aa = Math.abs(a.delta), bb = Math.abs(b.delta);
+    if (aa !== bb) return bb - aa;
+    return (b.delta - a.delta);
+  });
   return out;
 }
 
