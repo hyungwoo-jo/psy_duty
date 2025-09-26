@@ -824,30 +824,39 @@ function buildCarryoverRows(result, prev) {
   for (const klass of order) {
     if (!groups.has(klass)) continue;
     const people = groups.get(klass);
-    // 병당/응당: 역할별 독립 균형 보정
-    {
-      const prevByList = (prev.entriesByClassRole.get(klass)?.byung) || [];
-      const prevEuList = (prev.entriesByClassRole.get(klass)?.eung) || [];
-      const prevByByName = new Map(prevByList.map((e) => [e.name, Number(e.delta) || 0]));
-      const prevEuByName = new Map(prevEuList.map((e) => [e.name, Number(e.delta) || 0]));
-      const curBy = people.map((p) => ({ id: p.id, name: p.name, count: Number(byungCount.get(p.id) || 0) - (prevByByName.get(p.name) || 0) }));
-      const curEu = people.map((p) => ({ id: p.id, name: p.name, count: Number(eungCount.get(p.id) || 0) - (prevEuByName.get(p.name) || 0) }));
-      // 다음달 반영(역할): 이번달 실적(지난달 보정 반영 후)을 기준값에 맞춰 보정
-      const byDeltas = computeCarryoverDeltas(curBy);
-      const euDeltas = computeCarryoverDeltas(curEu);
-      if (byDeltas.length === 0) rows.push([klass, '병당', '-', '-']);
-      else for (const d of byDeltas) rows.push([ klass, '병당', d.name, { v: signed(d.delta), style: d.delta > 0 ? 'Pos' : 'Neg' } ]);
-      if (euDeltas.length === 0) rows.push([klass, '응당', '-', '-']);
-      else for (const d of euDeltas) rows.push([ klass, '응당', d.name, { v: signed(d.delta), style: d.delta > 0 ? 'Pos' : 'Neg' } ]);
-    }
-    // Day-off도 동일 규칙 적용
-    {
-      const prevList = (prev.entriesByClassRole.get(klass)?.off) || [];
+    // 역할별/Day-off별 최종 누적 보정치 계산
+    const roles = [
+      { key: 'byung', name: '병당', countMap: byungCount },
+      { key: 'eung', name: '응당', countMap: eungCount },
+      { key: 'off', name: 'Day-off', countMap: dayOff },
+    ];
+
+    for (const role of roles) {
+      // 1. Get previous month's deltas
+      const prevList = (prev.entriesByClassRole.get(klass)?.[role.key]) || [];
       const prevByName = new Map(prevList.map((e) => [e.name, Number(e.delta) || 0]));
-      const counts = people.map((p) => ({ id: p.id, name: p.name, count: Number(dayOff.get(p.id) || 0) - (prevByName.get(p.name) || 0) }));
-      const deltas = computeCarryoverDeltas(counts);
-      if (deltas.length === 0) rows.push([klass, 'Day-off', '-', '-']);
-      else for (const d of deltas) rows.push([ klass, 'Day-off', d.name, { v: signed(d.delta), style: d.delta > 0 ? 'Pos' : 'Neg' } ]);
+
+      // 2. Get current month's raw counts
+      const currentCounts = people.map((p) => ({ id: p.id, name: p.name, count: Number(role.countMap.get(p.id) || 0) }));
+
+      // 3. Calculate current month's deltas from raw counts
+      const currentDeltas = computeCarryoverDeltas(currentCounts);
+      const currentDeltasByName = new Map(currentDeltas.map(d => [d.name, d.delta]));
+
+      // 4. Final delta = previous delta + current delta
+      const finalDeltas = people.map(p => {
+        const prevDelta = prevByName.get(p.name) || 0;
+        const currentDelta = currentDeltasByName.get(p.name) || 0;
+        return { name: p.name, delta: prevDelta + currentDelta };
+      }).filter(d => d.delta !== 0);
+
+      if (finalDeltas.length === 0) {
+        rows.push([klass, role.name, '-', '-']);
+      } else {
+        for (const d of finalDeltas) {
+          rows.push([ klass, role.name, d.name, { v: signed(d.delta), style: d.delta > 0 ? 'Pos' : 'Neg' } ]);
+        }
+      }
     }
     rows.push(['','','','']);
   }
@@ -1125,7 +1134,6 @@ function renderCarryoverStats(result, opts = {}) {
   wrap.appendChild(title);
 
   // 준비: 인원/연차
-  const empById = new Map(result.employees.map((e) => [e.id, e]));
   const groups = new Map();
   for (const e of result.employees) {
     const k = e.klass || '기타';
@@ -1140,9 +1148,7 @@ function renderCarryoverStats(result, opts = {}) {
   const order = ['R1','R2','R3','R4','기타'];
   for (const klass of order) {
     if (!groups.has(klass)) continue;
-    // R3 포함: 같은 로직으로 보정치 계산
     const people = groups.get(klass);
-    const sectionsOffOnly = [ { key: 'off', label: 'Day-off', map: dayOff } ];
 
     const header = document.createElement('div');
     header.className = 'legend';
@@ -1158,39 +1164,39 @@ function renderCarryoverStats(result, opts = {}) {
     table.appendChild(thead);
     const tbody = document.createElement('tbody');
 
-    // 병당/응당: 최고 실적에 맞춰 부족한 인원에게만 + 보정치 적용 (이전 보정 반영)
-    {
-      const prevByList = (prev.entriesByClassRole.get(klass)?.byung) || [];
-      const prevEuList = (prev.entriesByClassRole.get(klass)?.eung) || [];
-      const prevByByName = new Map(prevByList.map((e) => [e.name, Number(e.delta) || 0]));
-      const prevEuByName = new Map(prevEuList.map((e) => [e.name, Number(e.delta) || 0]));
-      const curBy = people.map((p) => ({ id: p.id, name: p.name, count: Number(byungCount.get(p.id) || 0) - (prevByByName.get(p.name) || 0) }));
-      const curEu = people.map((p) => ({ id: p.id, name: p.name, count: Number(eungCount.get(p.id) || 0) - (prevEuByName.get(p.name) || 0) }));
-      const byDeltas = computeCarryoverDeltas(curBy);
-      const euDeltas = computeCarryoverDeltas(curEu);
-      // 병당
-      const trB = document.createElement('tr');
-      const tdbL = document.createElement('td'); tdbL.textContent = '병당'; trB.appendChild(tdbL);
-      const tdbR = document.createElement('td'); tdbR.textContent = byDeltas.length ? byDeltas.map((d) => `${d.name} ${signed(d.delta)}`).join(' · ') : '-'; trB.appendChild(tdbR);
-      tbody.appendChild(trB);
-      // 응당
-      const trE = document.createElement('tr');
-      const tdeL = document.createElement('td'); tdeL.textContent = '응당'; trE.appendChild(tdeL);
-      const tdeR = document.createElement('td'); tdeR.textContent = euDeltas.length ? euDeltas.map((d) => `${d.name} ${signed(d.delta)}`).join(' · ') : '-'; trE.appendChild(tdeR);
-      tbody.appendChild(trE);
-    }
-    // Day-off도 최고치 기준으로 부족 인원만 + 보정치 적용
-    for (const sec of sectionsOffOnly) {
-      const prevList = (prev.entriesByClassRole.get(klass)?.[sec.key]) || [];
+    const roles = [
+      { key: 'byung', name: '병당', countMap: byungCount },
+      { key: 'eung', name: '응당', countMap: eungCount },
+      { key: 'off', name: 'Day-off', countMap: dayOff },
+    ];
+
+    for (const role of roles) {
+      // 1. Get previous month's deltas
+      const prevList = (prev.entriesByClassRole.get(klass)?.[role.key]) || [];
       const prevByName = new Map(prevList.map((e) => [e.name, Number(e.delta) || 0]));
-      const counts = people.map((p) => ({ id: p.id, name: p.name, count: Number(sec.map.get(p.id) || 0) - (prevByName.get(p.name) || 0) }));
-      const deltas = computeCarryoverDeltas(counts);
-      const td = document.createElement('td');
+
+      // 2. Get current month's raw counts
+      const currentCounts = people.map((p) => ({ id: p.id, name: p.name, count: Number(role.countMap.get(p.id) || 0) }));
+
+      // 3. Calculate current month's deltas from raw counts
+      const currentDeltas = computeCarryoverDeltas(currentCounts);
+      const currentDeltasByName = new Map(currentDeltas.map(d => [d.name, d.delta]));
+
+      // 4. Final delta = previous delta + current delta
+      const finalDeltas = people.map(p => {
+        const prevDelta = prevByName.get(p.name) || 0;
+        const currentDelta = currentDeltasByName.get(p.name) || 0;
+        return { name: p.name, delta: prevDelta + currentDelta };
+      }).filter(d => d.delta !== 0);
+
       const tr = document.createElement('tr');
-      const itemTd = document.createElement('td'); itemTd.textContent = sec.label; tr.appendChild(itemTd);
-      const desc = deltas.length ? deltas.map((d) => `${d.name} ${signed(d.delta)}`).join(' · ') : '-';
-      td.textContent = desc;
-      tr.appendChild(td);
+      const labelTd = document.createElement('td');
+      labelTd.textContent = role.name;
+      tr.appendChild(labelTd);
+
+      const valueTd = document.createElement('td');
+      valueTd.textContent = finalDeltas.length ? finalDeltas.map((d) => `${d.name} ${signed(d.delta)}`).join(' · ') : '-';
+      tr.appendChild(valueTd);
       tbody.appendChild(tr);
     }
     table.appendChild(tbody);
