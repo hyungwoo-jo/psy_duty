@@ -1124,22 +1124,14 @@ function renderCarryoverStats(result, opts = {}) {
   title.textContent = '다음달 반영';
   wrap.appendChild(title);
 
-  const empById = new Map(result.employees.map((e) => [e.id, e]));
-  const groups = new Map();
-  for (const s of result.stats) { // Use result.stats for consistency
-    const emp = empById.get(s.id) || {};
-    const k = emp.klass || '기타';
-    if (!groups.has(k)) groups.set(k, []);
-    groups.get(k).push(s);
-  }
-
   const { byungCount, eungCount, dayOff } = computeRoleAndOffCounts(result);
   const prev = opts.previous || { sumByClassRole: new Map(), entriesByClassRole: new Map(), entries: [] };
+  const empById = new Map(result.employees.map((e) => [e.id, e]));
 
   const order = ['R1','R2','R3','R4','기타'];
   for (const klass of order) {
-    if (!groups.has(klass)) continue;
-    const people = groups.get(klass);
+    const peopleInClass = result.stats.filter(s => (empById.get(s.id)?.klass || '기타') === klass);
+    if (!peopleInClass.length) continue;
 
     const header = document.createElement('div');
     header.className = 'legend';
@@ -1164,11 +1156,11 @@ function renderCarryoverStats(result, opts = {}) {
     for (const role of roles) {
       const prevList = (prev.entriesByClassRole.get(klass)?.[role.key]) || [];
       const prevByName = new Map(prevList.map((e) => [e.name, Number(e.delta) || 0]));
-      const currentCounts = people.map((p) => ({ id: p.id, name: p.name, count: Number(role.countMap.get(p.id) || 0) }));
+      const currentCounts = peopleInClass.map((p) => ({ id: p.id, name: p.name, count: Number(role.countMap.get(p.id) || 0) }));
       const { deltas: currentDeltas, base: calculatedBase } = computeCarryoverDeltas(currentCounts);
       const currentDeltasByName = new Map(currentDeltas.map(d => [d.name, d.delta]));
 
-      const finalDeltas = people.map(p => {
+      const finalDeltas = peopleInClass.map(p => {
         const prevDelta = prevByName.get(p.name) || 0;
         const currentDelta = currentDeltasByName.get(p.name) || 0;
         return { name: p.name, delta: prevDelta + currentDelta };
