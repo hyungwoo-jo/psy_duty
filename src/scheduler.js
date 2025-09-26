@@ -97,8 +97,11 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
     const tEu = sEu > 0 ? (slots.eu * (eligEu.get(p.id) || 0) / sEu) : (slots.eu / Math.max(1, people.filter(pp => pp.klass === k).length));
     let capByVal = Math.ceil(tBy) + 2;
     let capEuVal = Math.ceil(tEu) + 2;
-    if (p.klass === 'R2') capByVal = Math.min(capByVal, Math.ceil(tBy) + 1); // R2: 병당 더 타이트(±1)
-    if (p.klass === 'R1') capEuVal = Math.min(capEuVal, Math.ceil(tEu) + 1); // R1: 응당 더 타이트(±1)
+    // 비 R3는 병/응 모두 기대치+1로 타이트하게(±1 목표)
+    if (p.klass !== 'R3') {
+      capByVal = Math.min(capByVal, Math.ceil(tBy) + 1);
+      capEuVal = Math.min(capEuVal, Math.ceil(tEu) + 1);
+    }
     capBy.set(p.id, capByVal);
     capEu.set(p.id, capEuVal);
   }
