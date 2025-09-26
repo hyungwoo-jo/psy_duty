@@ -1183,6 +1183,14 @@ function renderCarryoverStats(result, opts = {}) {
     wrap.appendChild(table);
   }
 
+  const diag = document.createElement('pre');
+  diag.style.background = '#111';
+  diag.style.color = '#ffa';
+  diag.style.padding = '8px';
+  diag.style.marginTop = '8px';
+  diag.textContent = `DIAGNOSTIC (Carry-over):\nEungCount Map: ${JSON.stringify([...eungCount.entries()])}`;
+  wrap.appendChild(diag);
+
   report.appendChild(wrap);
 }
 
@@ -1502,31 +1510,7 @@ function renderPersonalStats(result) {
 
   const empById = new Map(result.employees.map((e) => [e.id, e]));
   // Compute day-off counts from schedule (정의: 전날 당직이고 오늘이 평일이면 Day-off 1)
-  const dayOff = new Map();
-  // Role counts per person
-  const byungCount = new Map();
-  const eungCount = new Map();
-
-  const holidays = new Set(result.holidays || []);
-  const isWorkdayLocal = (date) => {
-    const d = new Date(date);
-    const key = fmtDate(d);
-    const wd = d.getDay();
-    return wd >= 1 && wd <= 5 && !holidays.has(key);
-  };
-
-  for (let i = 0; i < result.schedule.length; i += 1) {
-    const cell = result.schedule[i];
-    const next = result.schedule[i + 1];
-    if (!next) continue;
-    const isNextWk = isWorkdayLocal(next.date);
-    const dutyIds = (cell.duties || []).map((d) => d.id);
-    if (cell.duties && cell.duties.length) {
-      const b = cell.duties[0]; if (b) byungCount.set(b.id, (byungCount.get(b.id) || 0) + 1);
-      const e = cell.duties[1]; if (e) eungCount.set(e.id, (eungCount.get(e.id) || 0) + 1);
-    }
-    if (isNextWk) { for (const id of dutyIds) dayOff.set(id, (dayOff.get(id) || 0) + 1); }
-  }
+  const { byungCount, eungCount, dayOff } = computeRoleAndOffCounts(result);
 
   const groups = new Map();
   for (const s of result.stats) {
@@ -1575,5 +1559,14 @@ function renderPersonalStats(result) {
     table.appendChild(tbody);
     wrap.appendChild(table);
   }
+
+  const diag = document.createElement('pre');
+  diag.style.background = '#111';
+  diag.style.color = '#afa';
+  diag.style.padding = '8px';
+  diag.style.marginTop = '8px';
+  diag.textContent = `DIAGNOSTIC (Personal Stats):\nEungCount Map: ${JSON.stringify([...eungCount.entries()])}`;
+  wrap.appendChild(diag);
+
   report.appendChild(wrap);
 }
