@@ -786,19 +786,21 @@ function buildCarryoverRows(result, prev) {
       const prevEuByName = new Map(prevEuList.map((e) => [e.name, Number(e.delta) || 0]));
       const curBy = people.map((p) => ({ id: p.id, name: p.name, count: Number(byungCount.get(p.id) || 0) + (prevByByName.get(p.name) || 0) }));
       const curEu = people.map((p) => ({ id: p.id, name: p.name, count: Number(eungCount.get(p.id) || 0) + (prevEuByName.get(p.name) || 0) }));
-      const byDeltas = computeFairMultiDeltas(curBy, 'low', vacPrefer);
-      const euDeltas = computeFairMultiDeltas(curEu, 'low', vacPrefer);
+      // 다음달 반영(역할): '이번달+지난달 반영'을 기준으로, 중앙값(중간값) 대비 부족분만 +로 표시
+      const byDeltas = computeMedianOneSidedDeltas(curBy, vacPrefer);
+      const euDeltas = computeMedianOneSidedDeltas(curEu, vacPrefer);
       if (byDeltas.length === 0) rows.push([klass, '병당', '-', '-']);
       else for (const d of byDeltas) rows.push([ klass, '병당', d.name, { v: signed(d.delta), style: d.delta > 0 ? 'Pos' : 'Neg' } ]);
       if (euDeltas.length === 0) rows.push([klass, '응당', '-', '-']);
       else for (const d of euDeltas) rows.push([ klass, '응당', d.name, { v: signed(d.delta), style: d.delta > 0 ? 'Pos' : 'Neg' } ]);
     }
-    // Day-off: 평균 분배 보정
+    // Day-off: 중앙값 기준(+ 방향) 보정 — 지난달 반영 포함
     {
+      const prevList = (prev.entriesByClassRole.get(klass)?.off) || [];
       const prevList = (prev.entriesByClassRole.get(klass)?.off) || [];
       const prevByName = new Map(prevList.map((e) => [e.name, Number(e.delta) || 0]));
       const counts = people.map((p) => ({ id: p.id, name: p.name, count: Number(dayOff.get(p.id) || 0) + (prevByName.get(p.name) || 0) }));
-      const deltas = computeFairMultiDeltas(counts, 'low');
+      const deltas = computeMedianOneSidedDeltas(counts, vacPrefer);
       if (deltas.length === 0) rows.push([klass, 'Day-off', '-', '-']);
       else for (const d of deltas) rows.push([ klass, 'Day-off', d.name, { v: signed(d.delta), style: d.delta > 0 ? 'Pos' : 'Neg' } ]);
     }
@@ -825,6 +827,33 @@ function buildPreviousAdjustRows(result, prev) {
     rows.push(['','','','']);
   }
   return rows;
+}
+
+// 중앙값(one-sided) 보정: 그룹 중앙값(median) 기준으로 부족한 사람에게만 +를 부여(합계 비보존)
+function computeMedianOneSidedDeltas(entries, preferSet = new Set()) {
+  if (!entries.length) return [];
+  // entries: [{ id, name, count }]
+  const counts = entries.map((e) => Number(e.count || 0)).sort((a,b)=>a-b);
+  const mid = Math.floor(counts.length / 2);
+  const median = (counts.length % 2 === 1)
+    ? counts[mid]
+    : Math.floor((counts[mid - 1] + counts[mid]) / 2);
+  // 동점에서는 휴가자(preferSet)를 먼저 고려해 +를 주는 방향으로 출력 순서만 조정
+  const sorted = entries.slice().sort((a, b) => {
+    const da = (Number(a.count || 0) < median) ? (median - Number(a.count || 0)) : 0;
+    const db = (Number(b.count || 0) < median) ? (median - Number(b.count || 0)) : 0;
+    if (da !== db) return db - da; // 부족분 큰 순
+    const pa = preferSet.has(a.name) ? -1 : 0;
+    const pb = preferSet.has(b.name) ? -1 : 0;
+    if (pa !== pb) return pa - pb; // 휴가자 우선
+    return 0;
+  });
+  const out = [];
+  for (const e of sorted) {
+    const need = Math.max(0, median - Number(e.count || 0));
+    if (need > 0) out.push({ id: e.id, name: e.name, delta: need });
+  }
+  return out;
 }
 
 function monthKeyFromResult(result) {
