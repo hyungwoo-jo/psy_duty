@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Test computeCarryoverDeltas</title>
+</head>
+<body>
+    <h1>Testing the 'computeCarryoverDeltas' function from your live app.js</h1>
+    <p>Counts for '응당': 윤성민 (3), 장주만 (2), 조형우 (2)</p>
+    <p><b>Result:</b></p>
+    <pre id="result"></pre>
+
+    <script>
+        // EXACT function copied from https://hyungwoo-jo.github.io/psy_duty/src/app.js
+        function computeCarryoverDeltas(entries) {
+            if (!entries.length) return [];
+            const arr = entries.map((e, idx) => ({ idx, id: e.id, name: e.name, count: Number(e.count || 0), }));
+            const counts = arr.map((e) => e.count);
+            let base = counts[0] || 0;
+            if (counts.length > 1) {
+                const freq = new Map();
+                for (const c of counts) freq.set(c, (freq.get(c) || 0) + 1);
+                let maxFreq = 0;
+                let modes = [];
+                for (const [val, f] of freq.entries()) {
+                    if (f > maxFreq) {
+                        maxFreq = f;
+                        modes = [val];
+                    } else if (f === maxFreq) {
+                        modes.push(val);
+                    }
+                }
+                if (maxFreq > 1) {
+                    base = Math.max(...modes);
+                } else {
+                    const sorted = counts.slice().sort((a, b) => a - b);
+                    const mid = Math.floor(sorted.length / 2);
+                    base = (sorted.length % 2 === 0) ? sorted[mid - 1] : sorted[mid];
+                }
+            }
+            const deltas = arr
+                .map((e) => ({ id: e.id, name: e.name, delta: Number(e.count) - base }))
+                .filter((d) => d.delta !== 0)
+                .sort((a, b) => {
+                    const absA = Math.abs(a.delta);
+                    const absB = Math.abs(b.delta);
+                    if (absA !== absB) return absB - absA;
+                    return b.delta - a.delta;
+                });
+            return deltas;
+        }
+
+        const eungEntries = [
+            { name: '윤성민', count: 3 },
+            { name: '장주만', count: 2 },
+            { name: '조형우', count: 2 },
+        ];
+
+        const eungDeltas = computeCarryoverDeltas(eungEntries);
+
+        document.getElementById('result').textContent = JSON.stringify(eungDeltas, null, 2);
+    </script>
+</body>
+</html>

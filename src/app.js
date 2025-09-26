@@ -887,51 +887,42 @@ function buildPreviousAdjustRows(result, prev) {
 // delta = count - base → 많이 선 사람은 +, 적게 선 사람은 − 로 표시된다.
 function computeCarryoverDeltas(entries) {
   if (!entries.length) return [];
-  const arr = entries.map((e, idx) => ({
-    idx,
-    id: e.id,
-    name: e.name,
-    count: Number(e.count || 0),
-  }));
-  const counts = arr.map((e) => e.count);
-
+  const counts = entries.map(e => e.count);
   let base = counts[0] || 0;
+
   if (counts.length > 1) {
     const freq = new Map();
-    for (const c of counts) freq.set(c, (freq.get(c) || 0) + 1);
+    counts.forEach(c => freq.set(c, (freq.get(c) || 0) + 1));
 
     let maxFreq = 0;
     let modes = [];
-    for (const [val, f] of freq.entries()) {
+    freq.forEach((f, val) => {
       if (f > maxFreq) {
         maxFreq = f;
         modes = [val];
       } else if (f === maxFreq) {
         modes.push(val);
       }
-    }
+    });
 
-    if (maxFreq > 1) {
-      // 최빈값이 있으면 그 중 가장 큰 값을 기준으로 삼는다.
-      base = Math.max(...modes);
+    // If there is one clear mode, use it. Otherwise, use the median.
+    if (modes.length === 1 && maxFreq > 1) {
+      base = modes[0];
     } else {
-      // 최빈값이 없으면(모두 횟수가 다르면) 중앙값을 기준으로 한다.
-      const sorted = counts.slice().sort((a, b) => a - b);
+      const sorted = [...counts].sort((a, b) => a - b);
       const mid = Math.floor(sorted.length / 2);
-      // 짝수 개일 경우, 두 중앙값 중 작은 쪽을 택한다.
-      base = (sorted.length % 2 === 0) ? sorted[mid - 1] : sorted[mid];
+      base = sorted.length % 2 === 0 ? sorted[mid - 1] : sorted[mid];
     }
   }
 
-  const deltas = arr
-    .map((e) => ({ id: e.id, name: e.name, delta: Number(e.count) - base }))
-    .filter((d) => d.delta !== 0)
-    .sort((a, b) => {
-      const absA = Math.abs(a.delta);
-      const absB = Math.abs(b.delta);
-      if (absA !== absB) return absB - absA;
-      return b.delta - a.delta;
-    });
+  const deltas = entries.map(e => ({
+    name: e.name,
+    id: e.id,
+    delta: e.count - base,
+  }))
+  .filter(d => d.delta !== 0)
+  .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta) || b.delta - a.delta);
+
   return deltas;
 }
 
