@@ -836,8 +836,8 @@ function buildCarryoverRows(result, prev) {
       const prevEuList = (prev.entriesByClassRole.get(klass)?.eung) || [];
       const prevByByName = new Map(prevByList.map((e) => [e.name, Number(e.delta) || 0]));
       const prevEuByName = new Map(prevEuList.map((e) => [e.name, Number(e.delta) || 0]));
-      const curBy = people.map((p) => ({ id: p.id, name: p.name, count: Number(byungCount.get(p.id) || 0) + (prevByByName.get(p.name) || 0) }));
-      const curEu = people.map((p) => ({ id: p.id, name: p.name, count: Number(eungCount.get(p.id) || 0) + (prevEuByName.get(p.name) || 0) }));
+      const curBy = people.map((p) => ({ id: p.id, name: p.name, count: Number(byungCount.get(p.id) || 0) - (prevByByName.get(p.name) || 0) }));
+      const curEu = people.map((p) => ({ id: p.id, name: p.name, count: Number(eungCount.get(p.id) || 0) - (prevEuByName.get(p.name) || 0) }));
       // 다음달 반영(역할): '이번달+지난달 반영'을 기준으로, 중앙값 대비 signed(−/0/+)로 표시
       const byDeltas = computeMedianSignedDeltas(curBy);
       const euDeltas = computeMedianSignedDeltas(curEu);
@@ -850,7 +850,7 @@ function buildCarryoverRows(result, prev) {
     {
       const prevList = (prev.entriesByClassRole.get(klass)?.off) || [];
       const prevByName = new Map(prevList.map((e) => [e.name, Number(e.delta) || 0]));
-      const counts = people.map((p) => ({ id: p.id, name: p.name, count: Number(dayOff.get(p.id) || 0) + (prevByName.get(p.name) || 0) }));
+      const counts = people.map((p) => ({ id: p.id, name: p.name, count: Number(dayOff.get(p.id) || 0) - (prevByName.get(p.name) || 0) }));
       const deltas = computeMedianSignedDeltas(counts);
       if (deltas.length === 0) rows.push([klass, 'Day-off', '-', '-']);
       else for (const d of deltas) rows.push([ klass, 'Day-off', d.name, { v: signed(d.delta), style: d.delta > 0 ? 'Pos' : 'Neg' } ]);
@@ -1155,8 +1155,8 @@ function renderCarryoverStats(result, opts = {}) {
       const prevEuList = (prev.entriesByClassRole.get(klass)?.eung) || [];
       const prevByByName = new Map(prevByList.map((e) => [e.name, Number(e.delta) || 0]));
       const prevEuByName = new Map(prevEuList.map((e) => [e.name, Number(e.delta) || 0]));
-      const curBy = people.map((p) => ({ id: p.id, name: p.name, count: Number(byungCount.get(p.id) || 0) + (prevByByName.get(p.name) || 0) }));
-      const curEu = people.map((p) => ({ id: p.id, name: p.name, count: Number(eungCount.get(p.id) || 0) + (prevEuByName.get(p.name) || 0) }));
+      const curBy = people.map((p) => ({ id: p.id, name: p.name, count: Number(byungCount.get(p.id) || 0) - (prevByByName.get(p.name) || 0) }));
+      const curEu = people.map((p) => ({ id: p.id, name: p.name, count: Number(eungCount.get(p.id) || 0) - (prevEuByName.get(p.name) || 0) }));
       const byDeltas = computeFairMultiDeltas(curBy, 'low');
       const euDeltas = computeFairMultiDeltas(curEu, 'low');
       // 병당
@@ -1174,7 +1174,7 @@ function renderCarryoverStats(result, opts = {}) {
     for (const sec of sectionsOffOnly) {
       const prevList = (prev.entriesByClassRole.get(klass)?.[sec.key]) || [];
       const prevByName = new Map(prevList.map((e) => [e.name, Number(e.delta) || 0]));
-      const counts = people.map((p) => ({ id: p.id, name: p.name, count: Number(sec.map.get(p.id) || 0) + (prevByName.get(p.name) || 0) }));
+      const counts = people.map((p) => ({ id: p.id, name: p.name, count: Number(sec.map.get(p.id) || 0) - (prevByName.get(p.name) || 0) }));
       const deltas = computeFairMultiDeltas(counts, 'low');
       const td = document.createElement('td');
       const tr = document.createElement('tr');
