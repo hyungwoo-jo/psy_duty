@@ -797,7 +797,6 @@ function buildCarryoverRows(result, prev) {
     // Day-off: 중앙값 기준(+ 방향) 보정 — 지난달 반영 포함
     {
       const prevList = (prev.entriesByClassRole.get(klass)?.off) || [];
-      const prevList = (prev.entriesByClassRole.get(klass)?.off) || [];
       const prevByName = new Map(prevList.map((e) => [e.name, Number(e.delta) || 0]));
       const counts = people.map((p) => ({ id: p.id, name: p.name, count: Number(dayOff.get(p.id) || 0) + (prevByName.get(p.name) || 0) }));
       const deltas = computeMedianOneSidedDeltas(counts, vacPrefer);
