@@ -883,7 +883,7 @@ function buildPreviousAdjustRows(result, prev) {
   return rows;
 }
 
-// 캐리오버 산출: 세 값이 모두 다르면 두 번째로 큰 값을 기준으로, 같은 값이 있으면 그 값(최빈값)을 기준으로 잡는다.
+// 캐리오버 산출: 그룹 내 최빈값(mode)을 기준으로, 최빈값이 없으면 중앙값(median)을 기준으로 보정치를 계산한다.
 // delta = count - base → 많이 선 사람은 +, 적게 선 사람은 − 로 표시된다.
 function computeCarryoverDeltas(entries) {
   if (!entries.length) return [];
@@ -894,23 +894,33 @@ function computeCarryoverDeltas(entries) {
     count: Number(e.count || 0),
   }));
   const counts = arr.map((e) => e.count);
-  const freq = new Map();
-  for (const c of counts) freq.set(c, (freq.get(c) || 0) + 1);
 
   let base = counts[0] || 0;
-  let maxFreq = 0;
-  let modeVal = base;
-  for (const [val, f] of freq.entries()) {
-    if (f > maxFreq || (f === maxFreq && val > modeVal)) {
-      maxFreq = f;
-      modeVal = val;
+  if (counts.length > 1) {
+    const freq = new Map();
+    for (const c of counts) freq.set(c, (freq.get(c) || 0) + 1);
+
+    let maxFreq = 0;
+    let modes = [];
+    for (const [val, f] of freq.entries()) {
+      if (f > maxFreq) {
+        maxFreq = f;
+        modes = [val];
+      } else if (f === maxFreq) {
+        modes.push(val);
+      }
     }
-  }
-  if (maxFreq > 1) {
-    base = modeVal;
-  } else if (counts.length >= 2) {
-    const sorted = counts.slice().sort((a, b) => a - b);
-    base = sorted[sorted.length - 2];
+
+    if (maxFreq > 1) {
+      // 최빈값이 있으면 그 중 가장 큰 값을 기준으로 삼는다.
+      base = Math.max(...modes);
+    } else {
+      // 최빈값이 없으면(모두 횟수가 다르면) 중앙값을 기준으로 한다.
+      const sorted = counts.slice().sort((a, b) => a - b);
+      const mid = Math.floor(sorted.length / 2);
+      // 짝수 개일 경우, 두 중앙값 중 작은 쪽을 택한다.
+      base = (sorted.length % 2 === 0) ? sorted[mid - 1] : sorted[mid];
+    }
   }
 
   const deltas = arr
