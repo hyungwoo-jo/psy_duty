@@ -824,7 +824,6 @@ function buildCarryoverRows(result, prev) {
   for (const klass of order) {
     if (!groups.has(klass)) continue;
     const people = groups.get(klass);
-    // 역할별/Day-off별 최종 누적 보정치 계산
     const roles = [
       { key: 'byung', name: '병당', countMap: byungCount },
       { key: 'eung', name: '응당', countMap: eungCount },
@@ -832,18 +831,12 @@ function buildCarryoverRows(result, prev) {
     ];
 
     for (const role of roles) {
-      // 1. Get previous month's deltas
       const prevList = (prev.entriesByClassRole.get(klass)?.[role.key]) || [];
       const prevByName = new Map(prevList.map((e) => [e.name, Number(e.delta) || 0]));
-
-      // 2. Get current month's raw counts
       const currentCounts = people.map((p) => ({ id: p.id, name: p.name, count: Number(role.countMap.get(p.id) || 0) }));
-
-      // 3. Calculate current month's deltas from raw counts
-      const currentDeltas = computeCarryoverDeltas(currentCounts);
+      const { deltas: currentDeltas } = computeCarryoverDeltas(currentCounts);
       const currentDeltasByName = new Map(currentDeltas.map(d => [d.name, d.delta]));
 
-      // 4. Final delta = previous delta + current delta
       const finalDeltas = people.map(p => {
         const prevDelta = prevByName.get(p.name) || 0;
         const currentDelta = currentDeltasByName.get(p.name) || 0;
@@ -883,10 +876,8 @@ function buildPreviousAdjustRows(result, prev) {
   return rows;
 }
 
-// 캐리오버 산출: 그룹 내 최빈값(mode)을 기준으로, 최빈값이 없으면 중앙값(median)을 기준으로 보정치를 계산한다.
-// delta = count - base → 많이 선 사람은 +, 적게 선 사람은 − 로 표시된다.
 function computeCarryoverDeltas(entries) {
-  if (!entries.length) return [];
+  if (!entries.length) return { deltas: [], base: 0 };
   const counts = entries.map(e => e.count);
   let base = counts[0] || 0;
 
@@ -905,7 +896,6 @@ function computeCarryoverDeltas(entries) {
       }
     });
 
-    // If there is one clear mode, use it. Otherwise, use the median.
     if (modes.length === 1 && maxFreq > 1) {
       base = modes[0];
     } else {
@@ -923,7 +913,7 @@ function computeCarryoverDeltas(entries) {
   .filter(d => d.delta !== 0)
   .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta) || b.delta - a.delta);
 
-  return deltas;
+  return { deltas, base };
 }
 
 // 중앙값 기준 signed(−/0/+): delta = count − median
@@ -1134,7 +1124,6 @@ function renderCarryoverStats(result, opts = {}) {
   title.textContent = '다음달 반영';
   wrap.appendChild(title);
 
-  // 준비: 인원/연차
   const groups = new Map();
   for (const e of result.employees) {
     const k = e.klass || '기타';
@@ -1142,7 +1131,6 @@ function renderCarryoverStats(result, opts = {}) {
     groups.get(k).push(e);
   }
 
-  // 역할별/오프 카운트 산출
   const { byungCount, eungCount, dayOff } = computeRoleAndOffCounts(result);
   const prev = opts.previous || { sumByClassRole: new Map(), entriesByClassRole: new Map(), entries: [] };
 
@@ -1172,18 +1160,12 @@ function renderCarryoverStats(result, opts = {}) {
     ];
 
     for (const role of roles) {
-      // 1. Get previous month's deltas
       const prevList = (prev.entriesByClassRole.get(klass)?.[role.key]) || [];
       const prevByName = new Map(prevList.map((e) => [e.name, Number(e.delta) || 0]));
-
-      // 2. Get current month's raw counts
       const currentCounts = people.map((p) => ({ id: p.id, name: p.name, count: Number(role.countMap.get(p.id) || 0) }));
-
-      // 3. Calculate current month's deltas from raw counts
-      const currentDeltas = computeCarryoverDeltas(currentCounts);
+      const { deltas: currentDeltas, base: calculatedBase } = computeCarryoverDeltas(currentCounts);
       const currentDeltasByName = new Map(currentDeltas.map(d => [d.name, d.delta]));
 
-      // 4. Final delta = previous delta + current delta
       const finalDeltas = people.map(p => {
         const prevDelta = prevByName.get(p.name) || 0;
         const currentDelta = currentDeltasByName.get(p.name) || 0;
@@ -1196,7 +1178,10 @@ function renderCarryoverStats(result, opts = {}) {
       tr.appendChild(labelTd);
 
       const valueTd = document.createElement('td');
-      valueTd.textContent = finalDeltas.length ? finalDeltas.map((d) => `${d.name} ${signed(d.delta)}`).join(' · ') : '-';
+      const countsStr = `Counts: ${currentCounts.map(c => c.count).join(',')}`;
+      const baseStr = `Base: ${calculatedBase}`;
+      const deltaStr = finalDeltas.length ? finalDeltas.map((d) => `${d.name} ${signed(d.delta)}`).join(' · ') : '-';
+      valueTd.textContent = `(${countsStr} / ${baseStr}) -> ${deltaStr}`;
       tr.appendChild(valueTd);
       tbody.appendChild(tr);
     }
