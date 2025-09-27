@@ -182,6 +182,7 @@ async function onGenerate() {
         return generateSchedule(args);
       };
 
+      // 1. Run the main optimization loop
       let bestResult = runSchedule(roleHardcapMode);
       let minDeviations = calculateScheduleDeviations(bestResult, prev);
       let minHardExceeds = countHardExceed(bestResult, 75);
@@ -208,6 +209,24 @@ async function onGenerate() {
             minHardExceeds = candHardExceeds;
           }
           if (minDeviations === 0 && minHardExceeds === 0) break;
+        }
+      }
+
+      // 2. After optimization, check for underfilled slots and try to fix
+      const needsUnderfillFix = (result) => result.schedule.some((day) => (day.duties?.length || 0) < 2 || day.underfilled);
+
+      if (needsUnderfillFix(bestResult) && roleHardcapMode === 'strict') {
+        appendMessage('최적 결과에 빈 슬롯 발생. 완화 모드로 재시도...');
+        await new Promise(resolve => setTimeout(resolve, 0));
+        
+        const relaxedResult = runSchedule('relaxed');
+        
+        if (!needsUnderfillFix(relaxedResult)) {
+          bestResult = relaxedResult;
+          setRoleHardcapMode('relaxed');
+          appendMessage('완화 모드로 빈 슬롯을 채웠습니다.');
+        } else {
+           appendMessage('완화 모드로도 빈 슬롯을 채울 수 없습니다. 입력 제약을 확인해주세요.');
         }
       }
 
