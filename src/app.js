@@ -152,98 +152,101 @@ function parseUnavailable(text) {
   return map;
 }
 
-function onGenerate() {
+async function onGenerate() {
   try {
     setLoading(true, '당직표 생성 중… 잠시만 기다려주세요');
     disableActions(true);
     messages.textContent = '';
     
-    setTimeout(() => {
-      try {
-        const startDate = startInput.value;
-        const weeks = Math.max(1, Math.min(8, Number(weeksInput.value || 4)));
-        const endDate = endInput.value || null;
-        const employees = parseEmployees(employeesInput.value);
+    // Allow UI to render loading state before heavy computation
+    await new Promise(resolve => setTimeout(resolve, 30));
 
-        const holidays = [...parseHolidays(holidaysInput.value)];
-        const dutyUnavailable = parseUnavailable(unavailableInput.value);
-        const dayoffWish = parseUnavailable(dayoffWishInput?.value || '');
-        const optimization = 'strong';
-        const budgetMs = getTimeBudgetMsFromQuery();
-        const weekMode = 'calendar';
-        const weekdaySlots = 2;
-        const vacations = parseVacationRanges(vacationsInput.value);
-        const prior = getPriorDayDutyFromUI();
+    try {
+      const startDate = startInput.value;
+      const weeks = Math.max(1, Math.min(8, Number(weeksInput.value || 4)));
+      const endDate = endInput.value || null;
+      const employees = parseEmployees(employeesInput.value);
+      const prev = getPreviousStatsFromUI();
 
-        const runSchedule = (mode) => {
-          const args = { startDate, endDate, weeks, weekMode, employees, holidays, dutyUnavailableByName: Object.fromEntries(dutyUnavailable), dayoffWishByName: Object.fromEntries(dayoffWish), vacationDaysByName: Object.fromEntries(vacations), priorDayDuty: prior, optimization, weekdaySlots, weekendSlots: 2, timeBudgetMs: budgetMs, roleHardcapMode: mode };
-          return generateSchedule(args);
-        };
+      const holidays = [...parseHolidays(holidaysInput.value)];
+      const dutyUnavailable = parseUnavailable(unavailableInput.value);
+      const dayoffWish = parseUnavailable(dayoffWishInput?.value || '');
+      const optimization = 'strong';
+      const budgetMs = getTimeBudgetMsFromQuery();
+      const weekMode = 'calendar';
+      const weekdaySlots = 2;
+      const vacations = parseVacationRanges(vacationsInput.value);
+      const prior = getPriorDayDutyFromUI();
 
-        let bestResult = runSchedule(roleHardcapMode);
-        let minDeviations = calculateR1R2Deviations(bestResult);
-        let minHardExceeds = countHardExceed(bestResult, 75);
+      const runSchedule = (mode) => {
+        const args = { startDate, endDate, weeks, weekMode, employees, holidays, dutyUnavailableByName: Object.fromEntries(dutyUnavailable), dayoffWishByName: Object.fromEntries(dayoffWish), vacationDaysByName: Object.fromEntries(vacations), priorDayDuty: prior, optimization, weekdaySlots, weekendSlots: 2, timeBudgetMs: budgetMs, roleHardcapMode: mode };
+        return generateSchedule(args);
+      };
 
-        if (minDeviations > 0 || minHardExceeds > 0) {
-          for (let i = 1; i <= 5; i++) {
-            setLoading(true, `결과 최적화 중… (재시도 ${i}/5)`);
-            const candidateResult = runSchedule(roleHardcapMode);
-            const candidateDeviations = calculateR1R2Deviations(candidateResult);
-            const candHardExceeds = countHardExceed(candidateResult, 75);
+      let bestResult = runSchedule(roleHardcapMode);
+      let minDeviations = calculateR1R2Deviations(bestResult, prev);
+      let minHardExceeds = countHardExceed(bestResult, 75);
 
-            let isBetter = false;
-            if (candHardExceeds < minHardExceeds) {
-              isBetter = true;
-            } else if (candHardExceeds === minHardExceeds && candidateDeviations < minDeviations) {
-              isBetter = true;
-            }
+      if (minDeviations > 0 || minHardExceeds > 0) {
+        for (let i = 1; i <= 5; i++) {
+          setLoading(true, `결과 최적화 중… (재시도 ${i}/5)`);
+          await new Promise(resolve => setTimeout(resolve, 0)); // Yield to event loop for UI update
 
-            if (isBetter) {
-              bestResult = candidateResult;
-              minDeviations = candidateDeviations;
-              minHardExceeds = candHardExceeds;
-            }
-            if (minDeviations === 0 && minHardExceeds === 0) break;
+          const candidateResult = runSchedule(roleHardcapMode);
+          const candidateDeviations = calculateR1R2Deviations(candidateResult, prev);
+          const candHardExceeds = countHardExceed(candidateResult, 75);
+
+          let isBetter = false;
+          if (candHardExceeds < minHardExceeds) {
+            isBetter = true;
+          } else if (candHardExceeds === minHardExceeds && candidateDeviations < minDeviations) {
+            isBetter = true;
           }
+
+          if (isBetter) {
+            bestResult = candidateResult;
+            minDeviations = candidateDeviations;
+            minHardExceeds = candHardExceeds;
+          }
+          if (minDeviations === 0 && minHardExceeds === 0) break;
         }
-
-        lastResult = bestResult;
-        renderSummary(bestResult);
-        const prev = getPreviousStatsFromUI();
-        renderReport(bestResult, { previous: prev });
-        renderRoster(bestResult);
-        if (exportXlsxBtn) exportXlsxBtn.disabled = false;
-        if (exportIcsBtn) exportIcsBtn.disabled = false;
-
-        const finalSoftExceeds = countSoftExceed(bestResult, 72);
-        if (finalSoftExceeds > 0) {
-          const warnMsg = `주의: 일부 주의 72h 초과가 해소되지 않았습니다 (셀 ${finalSoftExceeds}개). 설정을 조정하거나 인원을 늘려주세요.`;
-          appendMessage(warnMsg);
-        }
-
-        const names = new Set(employees.map((e) => e.name));
-        const unknownUnavail = [...dutyUnavailable.keys()].filter((n) => !names.has(n));
-        const unknownDayoff = [...dayoffWish.keys()].filter((n) => !names.has(n));
-        const unknownVacs = [...vacations.keys()].filter((n) => !names.has(n));
-        const priorNames = [prior.byung, prior.eung].filter(Boolean);
-        const unknownPrior = priorNames.filter((n) => !names.has(n));
-        const notes = [];
-        if (unknownUnavail.length) notes.push(`당직 불가일 이름 불일치: ${unknownUnavail.join(', ')}`);
-        if (unknownDayoff.length) notes.push(`Day-off 희망일 이름 불일치: ${unknownDayoff.join(', ')}`);
-        if (unknownVacs.length) notes.push(`휴가 이름 불일치: ${unknownVacs.join(', ')}`);
-        if (unknownPrior.length) notes.push(`전일 당직 이름 불일치: ${unknownPrior.join(', ')}`);
-        notes.forEach((msg) => appendMessage(msg));
-
-      } catch (err) {
-        console.error(err);
-        messages.textContent = err.message || String(err);
-        if (exportXlsxBtn) exportXlsxBtn.disabled = true;
-        if (exportIcsBtn) exportIcsBtn.disabled = true;
-      } finally {
-        setLoading(false);
-        disableActions(false);
       }
-    }, 30);
+
+      lastResult = bestResult;
+      renderSummary(bestResult);
+      renderReport(bestResult, { previous: prev });
+      renderRoster(bestResult);
+      if (exportXlsxBtn) exportXlsxBtn.disabled = false;
+      if (exportIcsBtn) exportIcsBtn.disabled = false;
+
+      const finalSoftExceeds = countSoftExceed(bestResult, 72);
+      if (finalSoftExceeds > 0) {
+        const warnMsg = `주의: 일부 주의 72h 초과가 해소되지 않았습니다 (셀 ${finalSoftExceeds}개). 설정을 조정하거나 인원을 늘려주세요.`;
+        appendMessage(warnMsg);
+      }
+
+      const names = new Set(employees.map((e) => e.name));
+      const unknownUnavail = [...dutyUnavailable.keys()].filter((n) => !names.has(n));
+      const unknownDayoff = [...dayoffWish.keys()].filter((n) => !names.has(n));
+      const unknownVacs = [...vacations.keys()].filter((n) => !names.has(n));
+      const priorNames = [prior.byung, prior.eung].filter(Boolean);
+      const unknownPrior = priorNames.filter((n) => !names.has(n));
+      const notes = [];
+      if (unknownUnavail.length) notes.push(`당직 불가일 이름 불일치: ${unknownUnavail.join(', ')}`);
+      if (unknownDayoff.length) notes.push(`Day-off 희망일 이름 불일치: ${unknownDayoff.join(', ')}`);
+      if (unknownVacs.length) notes.push(`휴가 이름 불일치: ${unknownVacs.join(', ')}`);
+      if (unknownPrior.length) notes.push(`전일 당직 이름 불일치: ${unknownPrior.join(', ')}`);
+      notes.forEach((msg) => appendMessage(msg));
+
+    } catch (err) {
+      console.error(err);
+      messages.textContent = err.message || String(err);
+      if (exportXlsxBtn) exportXlsxBtn.disabled = true;
+      if (exportIcsBtn) exportIcsBtn.disabled = true;
+    } finally {
+      setLoading(false);
+      disableActions(false);
+    }
   } catch (err) {
     console.error(err);
     messages.textContent = err.message || String(err);
@@ -993,20 +996,29 @@ function countHardExceed(result, limit = 75) {
   } catch { return 0; }
 }
 
-function calculateR1R2Deviations(result) {
+function calculateR1R2Deviations(result, prev) {
+  let deviationCount = 0;
   const { byungCount, eungCount } = computeRoleAndOffCounts(result);
   const empById = new Map(result.employees.map((e) => [e.id, e]));
-  let deviationCount = 0;
 
   for (const klass of ['R1', 'R2']) {
     const peopleInClass = result.stats.filter(s => (empById.get(s.id)?.klass || '기타') === klass);
     if (!peopleInClass.length) continue;
 
-    for (const role of [{ countMap: byungCount }, { countMap: eungCount }]) {
-      const counts = peopleInClass.map(p => role.countMap.get(p.id) || 0);
-      const avg = counts.reduce((a, b) => a + b, 0) / counts.length;
-      for (const count of counts) {
-        if (Math.abs(count - avg) >= 1.99) { // Use 1.99 to avoid float precision issues with 2
+    for (const role of [{ key: 'byung', countMap: byungCount }, { key: 'eung', countMap: eungCount }]) {
+      const prevList = (prev.entriesByClassRole.get(klass)?.[role.key]) || [];
+      const prevByName = new Map(prevList.map((e) => [e.name, Number(e.delta) || 0]));
+      
+      const finalCounts = peopleInClass.map((p) => ({
+        id: p.id,
+        name: p.name,
+        count: (Number(role.countMap.get(p.id) || 0)) + (prevByName.get(p.name) || 0),
+      }));
+
+      const { deltas: finalDeltas } = computeCarryoverDeltas(finalCounts);
+      
+      for (const d of finalDeltas) {
+        if (Math.abs(d.delta) >= 1.99) { // Use 1.99 to avoid float issues
           deviationCount++;
         }
       }
