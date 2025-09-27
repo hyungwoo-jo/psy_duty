@@ -814,16 +814,14 @@ function crc32(bytes) {
 function buildCarryoverRows(result, prev) {
   const rows = [[ { v: '연차', style: 'Header' }, { v: '항목', style: 'Header' }, { v: '이름', style: 'Header' }, { v: '보정치', style: 'Header' } ]];
   const { byungCount, eungCount, dayOff } = computeRoleAndOffCounts(result);
-  const groups = new Map();
-  for (const e of result.employees) {
-    const k = e.klass || '기타';
-    if (!groups.has(k)) groups.set(k, []);
-    groups.get(k).push(e);
-  }
+  const empById = new Map(result.employees.map((e) => [e.id, e]));
+
   const order = ['R1','R2','R3','R4','기타'];
   for (const klass of order) {
-    if (!groups.has(klass)) continue;
-    const people = groups.get(klass);
+    if (!empById.size) continue;
+    const peopleInClass = result.stats.filter(s => (empById.get(s.id)?.klass || '기타') === klass);
+    if (!peopleInClass.length) continue;
+
     const roles = [
       { key: 'byung', name: '병당', countMap: byungCount },
       { key: 'eung', name: '응당', countMap: eungCount },
@@ -833,15 +831,14 @@ function buildCarryoverRows(result, prev) {
     for (const role of roles) {
       const prevList = (prev.entriesByClassRole.get(klass)?.[role.key]) || [];
       const prevByName = new Map(prevList.map((e) => [e.name, Number(e.delta) || 0]));
-      const currentCounts = people.map((p) => ({ id: p.id, name: p.name, count: Number(role.countMap.get(p.id) || 0) }));
-      const { deltas: currentDeltas } = computeCarryoverDeltas(currentCounts);
-      const currentDeltasByName = new Map(currentDeltas.map(d => [d.name, d.delta]));
 
-      const finalDeltas = people.map(p => {
-        const prevDelta = prevByName.get(p.name) || 0;
-        const currentDelta = currentDeltasByName.get(p.name) || 0;
-        return { name: p.name, delta: prevDelta + currentDelta };
-      }).filter(d => d.delta !== 0);
+      const finalCounts = peopleInClass.map((p) => ({
+        id: p.id,
+        name: p.name,
+        count: (Number(role.countMap.get(p.id) || 0)) + (prevByName.get(p.name) || 0),
+      }));
+
+      const { deltas: finalDeltas } = computeCarryoverDeltas(finalCounts);
 
       if (finalDeltas.length === 0) {
         rows.push([klass, role.name, '-', '-']);
@@ -1156,15 +1153,16 @@ function renderCarryoverStats(result, opts = {}) {
     for (const role of roles) {
       const prevList = (prev.entriesByClassRole.get(klass)?.[role.key]) || [];
       const prevByName = new Map(prevList.map((e) => [e.name, Number(e.delta) || 0]));
-      const currentCounts = peopleInClass.map((p) => ({ id: p.id, name: p.name, count: Number(role.countMap.get(p.id) || 0) }));
-      const { deltas: currentDeltas, base: calculatedBase } = computeCarryoverDeltas(currentCounts);
-      const currentDeltasByName = new Map(currentDeltas.map(d => [d.name, d.delta]));
+      
+      // 1. Create "Final Count" by adding previous delta to current raw count
+      const finalCounts = peopleInClass.map((p) => ({
+        id: p.id,
+        name: p.name,
+        count: (Number(role.countMap.get(p.id) || 0)) + (prevByName.get(p.name) || 0),
+      }));
 
-      const finalDeltas = peopleInClass.map(p => {
-        const prevDelta = prevByName.get(p.name) || 0;
-        const currentDelta = currentDeltasByName.get(p.name) || 0;
-        return { name: p.name, delta: prevDelta + currentDelta };
-      }).filter(d => d.delta !== 0);
+      // 2. Calculate new base and deltas from the "Final Count"
+      const { deltas: finalDeltas, base: calculatedBase } = computeCarryoverDeltas(finalCounts);
 
       const tr = document.createElement('tr');
       const labelTd = document.createElement('td');
@@ -1172,10 +1170,16 @@ function renderCarryoverStats(result, opts = {}) {
       tr.appendChild(labelTd);
 
       const valueTd = document.createElement('td');
-      const countsStr = `Counts: ${currentCounts.map(c => c.count).join(',')}`;
-      const baseStr = `Base: ${calculatedBase}`;
+      const showDiagnostics = document.getElementById('toggle-diagnostics')?.checked;
       const deltaStr = finalDeltas.length ? finalDeltas.map((d) => `${d.name} ${signed(d.delta)}`).join(' · ') : '-';
-      valueTd.textContent = `(${countsStr} / ${baseStr}) -> ${deltaStr}`;
+
+      if (showDiagnostics) {
+        const countsStr = `Final Counts: ${finalCounts.map(c => c.count).join(',')}`;
+        const baseStr = `Base: ${calculatedBase}`;
+        valueTd.textContent = `(${countsStr} / ${baseStr}) -> ${deltaStr}`;
+      } else {
+        valueTd.textContent = deltaStr;
+      }
       tr.appendChild(valueTd);
       tbody.appendChild(tr);
     }
@@ -1183,13 +1187,16 @@ function renderCarryoverStats(result, opts = {}) {
     wrap.appendChild(table);
   }
 
-  const diag = document.createElement('pre');
-  diag.style.background = '#111';
-  diag.style.color = '#ffa';
-  diag.style.padding = '8px';
-  diag.style.marginTop = '8px';
-  diag.textContent = `DIAGNOSTIC (Carry-over):\nEungCount Map: ${JSON.stringify([...eungCount.entries()])}`;
-  wrap.appendChild(diag);
+  const showDiagnostics = document.getElementById('toggle-diagnostics')?.checked;
+  if (showDiagnostics) {
+    const diag = document.createElement('pre');
+    diag.style.background = '#111';
+    diag.style.color = '#ffa';
+    diag.style.padding = '8px';
+    diag.style.marginTop = '8px';
+    diag.textContent = `DIAGNOSTIC (Carry-over):\nEungCount Map: ${JSON.stringify([...eungCount.entries()])}`;
+    wrap.appendChild(diag);
+  }
 
   report.appendChild(wrap);
 }
@@ -1560,13 +1567,16 @@ function renderPersonalStats(result) {
     wrap.appendChild(table);
   }
 
-  const diag = document.createElement('pre');
-  diag.style.background = '#111';
-  diag.style.color = '#afa';
-  diag.style.padding = '8px';
-  diag.style.marginTop = '8px';
-  diag.textContent = `DIAGNOSTIC (Personal Stats):\nEungCount Map: ${JSON.stringify([...eungCount.entries()])}`;
-  wrap.appendChild(diag);
+  const showDiagnostics = document.getElementById('toggle-diagnostics')?.checked;
+  if (showDiagnostics) {
+    const diag = document.createElement('pre');
+    diag.style.background = '#111';
+    diag.style.color = '#afa';
+    diag.style.padding = '8px';
+    diag.style.marginTop = '8px';
+    diag.textContent = `DIAGNOSTIC (Personal Stats):\nEungCount Map: ${JSON.stringify([...eungCount.entries()])}`;
+    wrap.appendChild(diag);
+  }
 
   report.appendChild(wrap);
 }
