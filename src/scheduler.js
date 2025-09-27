@@ -145,7 +145,7 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
     capEu.set(p.id, capEuVal);
   }
   // 전일 당직(시작일 전날) 사전 반영: 다음날(start)은 Day-off(주말/공휴일 전날이면 정규/당직 모두 제외)
-  (function applyPriorDayDutyOff() {
+  function applyPriorDayDutyOff() {
     try {
       const prev = addDays(start, -1);
       const prevIsWork = isWorkday(prev, holidaySet);
@@ -156,7 +156,8 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
         if (prevIsWork) p.regularOffDayKeys.add(startKey); else p.offDayKeys.add(startKey);
       }
     } catch {}
-  })();
+  }
+  applyPriorDayDutyOff();
 
   // 날짜 키 ↔ 인덱스 매핑
   const keyToIndex = new Map(days.map((d, i) => [fmtDate(d), i]));
@@ -562,7 +563,7 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
     employees: people.map((p) => ({ id: p.id, name: p.name, preference: p.preference, klass: p.klass, pediatric: !!p.pediatric })),
     endDate: endDate ? fmtDate(addDays(start, totalDays - 1)) : null,
     schedule,
-    config: { weekMode, weekdaySlots: Math.max(1, Math.min(2, weekdaySlots)), weekendSlots: Math.max(1, weekendSlots), roleHardcapMode: hardcapMode },
+    config: { weekMode, weekdaySlots: Math.max(1, Math.min(2, weekdaySlots)), weekendSlots: Math.max(1, weekendSlots), roleHardcapMode: hardcapMode, priorDayDuty },
     warnings: preAssignFailures.length ? (warnings.concat([`불가일 전일 당직 배치 실패: ${preAssignFailures.join(' / ')}`])) : warnings,
     stats: people.map((p, i) => ({
       id: p.id,
@@ -1127,6 +1128,9 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
       p._byung = 0;
       p._eung = 0;
     }
+
+    applyPriorDayDutyOff();
+
     // 1) 당직 시간 누적 및 오프로 인한 상태 설정(주말/공휴일)
     for (let i = 0; i < schedule.length; i += 1) {
       const cell = schedule[i];
