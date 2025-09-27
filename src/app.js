@@ -182,39 +182,67 @@ async function onGenerate() {
         return generateSchedule(args);
       };
 
-      // 1. Run the main optimization loop
-      let bestResult = runSchedule(roleHardcapMode);
-      let minDeviations = calculateScheduleDeviations(bestResult, prev);
-      let minHardExceeds = countHardExceed(bestResult, 75);
+      const calculateScore = (result, prev) => {
+        let score = 0;
+        const { byungCount, eungCount } = computeRoleAndOffCounts(result);
+        const empById = new Map(result.employees.map((e) => [e.id, e]));
 
-      if (minDeviations > 0 || minHardExceeds > 0) {
+        for (const klass of ['R1', 'R2']) {
+          const peopleInClass = result.stats.filter(s => (empById.get(s.id)?.klass || '기타') === klass);
+          if (!peopleInClass.length) continue;
+
+          for (const role of [{ key: 'byung', countMap: byungCount }, { key: 'eung', countMap: eungCount }]) {
+            const prevList = (prev.entriesByClassRole.get(klass)?.[role.key]) || [];
+            const prevByName = new Map(prevList.map((e) => [e.name, Number(e.delta) || 0]));
+            
+            const finalCounts = peopleInClass.map((p) => ({
+              id: p.id,
+              name: p.name,
+              count: (Number(role.countMap.get(p.id) || 0)) + (prevByName.get(p.name) || 0),
+            }));
+
+            const { deltas: finalDeltas } = computeCarryoverDeltas(finalCounts);
+            
+            for (const d of finalDeltas) {
+              if (Math.abs(d.delta) >= 2) {
+                score += 10; // Heavy penalty for ±2 deviations
+              }
+            }
+          }
+        }
+
+        const r3NonPediatric = result.employees.filter(p => p.klass === 'R3' && !p.pediatric);
+        if (r3NonPediatric.length === 2) {
+          const p1 = r3NonPediatric[0];
+          const p2 = r3NonPediatric[1];
+          score += Math.abs((byungCount.get(p1.id) || 0) - (byungCount.get(p2.id) || 0));
+          score += Math.abs((eungCount.get(p1.id) || 0) - (eungCount.get(p2.id) || 0));
+        }
+        
+        score += countHardExceed(result, 75) * 100; // Very heavy penalty
+        return score;
+      }
+
+      let bestResult = runSchedule(roleHardcapMode);
+      let bestScore = calculateScore(bestResult, prev);
+
+      if (bestScore > 0) {
         for (let i = 1; i <= 15; i++) {
           setLoading(true, `결과 최적화 중… (재시도 ${i}/15)`);
           await new Promise(resolve => setTimeout(resolve, 0));
 
           const candidateResult = runSchedule(roleHardcapMode);
-          const candidateDeviations = calculateScheduleDeviations(candidateResult, prev);
-          const candHardExceeds = countHardExceed(candidateResult, 75);
+          const candidateScore = calculateScore(candidateResult, prev);
 
-          let isBetter = false;
-          if (candHardExceeds < minHardExceeds) {
-            isBetter = true;
-          } else if (candHardExceeds === minHardExceeds && candidateDeviations < minDeviations) {
-            isBetter = true;
-          }
-
-          if (isBetter) {
+          if (candidateScore < bestScore) {
             bestResult = candidateResult;
-            minDeviations = candidateDeviations;
-            minHardExceeds = candHardExceeds;
+            bestScore = candidateScore;
           }
-          if (minDeviations === 0 && minHardExceeds === 0) break;
+          if (bestScore === 0) break;
         }
       }
 
-      // 2. After optimization, check for underfilled slots and try to fix
       const needsUnderfillFix = (result) => result.schedule.some((day) => (day.duties?.length || 0) < 2 || day.underfilled);
-
       if (needsUnderfillFix(bestResult) && roleHardcapMode === 'strict') {
         appendMessage('최적 결과에 빈 슬롯 발생. 완화 모드로 재시도...');
         await new Promise(resolve => setTimeout(resolve, 0));
