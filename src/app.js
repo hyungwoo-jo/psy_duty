@@ -1272,12 +1272,28 @@ function computeRoleAndOffCounts(result) {
   const eungCount = new Map();
   const dayOff = new Map();
   const holidays = new Set(result.holidays || []);
+
   const isWorkdayLocal = (date) => {
     const d = new Date(date);
     const key = fmtDate(d);
     const wd = d.getDay();
     return wd >= 1 && wd <= 5 && !holidays.has(key);
   };
+
+  // Fix: Account for prior day duty causing a day-off on the first day
+  if (result.schedule.length > 0) {
+    const firstDay = result.schedule[0];
+    if (isWorkdayLocal(firstDay.date)) {
+      const priorDutyNames = new Set([result.config.priorDayDuty?.byung, result.config.priorDayDuty?.eung].filter(Boolean));
+      if (priorDutyNames.size > 0) {
+        const priorDutyPeople = result.employees.filter(e => priorDutyNames.has(e.name));
+        for (const p of priorDutyPeople) {
+          dayOff.set(p.id, (dayOff.get(p.id) || 0) + 1);
+        }
+      }
+    }
+  }
+
   for (let i = 0; i < result.schedule.length; i += 1) {
     const cell = result.schedule[i];
     const next = result.schedule[i + 1];
