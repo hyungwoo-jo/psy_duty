@@ -224,68 +224,51 @@ async function onGenerate() {
       }
 
       let bestResult = runSchedule(roleHardcapMode);
-      let bestScore = calculateScore(bestResult, prev);
 
       if (roleHardcapMode === 'strict') {
-        let perfectResult = null;
+        const getCompositeScore = (result, prev) => {
+          const fairnessScore = calculateScore(result, prev);
+          const softExceeds = countSoftExceed(result, 72);
+          const hardExceeds = countHardExceed(result, 75);
+          return (hardExceeds * 1000) + (fairnessScore * 100) + softExceeds;
+        };
 
-        // First, check if the initial result is already perfect.
-        if (countSoftExceed(bestResult, 72) === 0) {
-          perfectResult = bestResult;
-        } else {
-          // If not, loop to find a better one.
-          for (let i = 1; i <= 15; i++) {
-            setLoading(true, `주 72시간 초과 최소화 중… (재시도 ${i}/15)`);
-            await new Promise(resolve => setTimeout(resolve, 0));
+        let bestCompositeScore = getCompositeScore(bestResult, prev);
 
-            const candidateResult = runSchedule(roleHardcapMode);
+        for (let i = 1; i <= 15; i++) {
+          if (bestCompositeScore === 0) {
+            appendMessage(`최적 결과 발견 (시도 ${i - 1}회)`);
+            break;
+          }
 
-            // 1. Check for a "perfect" result (zero cells > 72h)
-            if (countSoftExceed(candidateResult, 72) === 0) {
-              perfectResult = candidateResult;
-              appendMessage('주 72시간 초과 없는 최적 결과를 찾았습니다.');
-              break; // Found a perfect one, exit loop.
-            }
+          setLoading(true, `결과 최적화 중… (재시도 ${i}/15)`);
+          await new Promise(resolve => setTimeout(resolve, 0));
 
-            // 2. If not perfect, compare based on the new criteria.
-            // Primary criteria: minimize cells > 75h.
-            // Secondary criteria (if equal): use the original score.
-            const currentBestHardExceeds = countHardExceed(bestResult, 75);
-            const candidateHardExceeds = countHardExceed(candidateResult, 75);
-            
-            if (candidateHardExceeds < currentBestHardExceeds) {
-              bestResult = candidateResult;
-              bestScore = calculateScore(bestResult, prev); // update score for next comparison
-            } else if (candidateHardExceeds === currentBestHardExceeds) {
-              const candidateScore = calculateScore(candidateResult, prev);
-              if (candidateScore < bestScore) {
-                bestResult = candidateResult;
-                bestScore = candidateScore;
-              }
-            }
+          const candidateResult = runSchedule(roleHardcapMode);
+          const candidateCompositeScore = getCompositeScore(candidateResult, prev);
+
+          if (candidateCompositeScore < bestCompositeScore) {
+            bestResult = candidateResult;
+            bestCompositeScore = candidateCompositeScore;
           }
         }
-
-        if (perfectResult) {
-          bestResult = perfectResult;
-        }
-
       } else { // relaxed mode
-          if (bestScore > 0) {
-            for (let i = 1; i <= 15; i++) {
-              setLoading(true, `결과 최적화 중… (재시도 ${i}/15)`);
-              await new Promise(resolve => setTimeout(resolve, 0));
-    
-              const candidateResult = runSchedule(roleHardcapMode);
-              const candidateScore = calculateScore(candidateResult, prev);
-    
-              if (candidateScore < bestScore) {
-                bestResult = candidateResult;
-                bestScore = candidateScore;
-              }
-              if (bestScore === 0) break;
+        let bestScore = calculateScore(bestResult, prev);
+        if (bestScore > 0) {
+          for (let i = 1; i <= 15; i++) {
+            setLoading(true, `결과 최적화 중… (재시도 ${i}/15)`);
+            await new Promise(resolve => setTimeout(resolve, 0));
+  
+            const candidateResult = runSchedule(roleHardcapMode);
+            const candidateScore = calculateScore(candidateResult, prev);
+  
+            if (candidateScore < bestScore) {
+              bestResult = candidateResult;
+              bestScore = candidateScore;
             }
+            if (bestScore === 0) break;
           }
+        }
       }
 
       const needsUnderfillFix = (result) => result.schedule.some((day) => (day.duties?.length || 0) < 2 || day.underfilled);
