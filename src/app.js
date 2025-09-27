@@ -157,7 +157,7 @@ function onGenerate() {
     setLoading(true, '당직표 생성 중… 잠시만 기다려주세요');
     disableActions(true);
     messages.textContent = '';
-    // 렌더 기회를 준 뒤 실제 계산 수행
+    
     setTimeout(() => {
       try {
         const startDate = startInput.value;
@@ -171,72 +171,56 @@ function onGenerate() {
         const optimization = 'strong';
         const budgetMs = getTimeBudgetMsFromQuery();
         const weekMode = 'calendar';
-        const weekdaySlots = 2; // 병당 1 + 응당 1
+        const weekdaySlots = 2;
         const vacations = parseVacationRanges(vacationsInput.value);
         const prior = getPriorDayDutyFromUI();
+
         const runSchedule = (mode) => {
           const args = { startDate, endDate, weeks, weekMode, employees, holidays, dutyUnavailableByName: Object.fromEntries(dutyUnavailable), dayoffWishByName: Object.fromEntries(dayoffWish), vacationDaysByName: Object.fromEntries(vacations), priorDayDuty: prior, optimization, weekdaySlots, weekendSlots: 2, timeBudgetMs: budgetMs, roleHardcapMode: mode };
-          let base = generateSchedule(args);
-          let best = base;
-          let bestEx = countSoftExceed(base, 72);
-          if (bestEx > 0) {
-            for (let i = 1; i <= 5; i += 1) {
-              setLoading(true, `당직표 생성 중… (재시도 ${i}/5)`);
-              const cand = generateSchedule(args);
-              const ex = countSoftExceed(cand, 72);
-              if (ex === 0) { best = cand; bestEx = 0; break; }
-              if (ex < bestEx) { best = cand; bestEx = ex; }
-            }
-          }
-          return { schedule: best, softExceed: bestEx };
+          return generateSchedule(args);
         };
 
-        const needsUnderfillFix = (result) => result.schedule.some((day) => (day.duties?.length || 0) < 2 || day.underfilled);
+        let bestResult = runSchedule(roleHardcapMode);
+        let minDeviations = calculateR1R2Deviations(bestResult);
+        let minHardExceeds = countHardExceed(bestResult, 75);
 
-        let { schedule: best, softExceed: bestEx } = runSchedule(roleHardcapMode);
+        if (minDeviations > 0 || minHardExceeds > 0) {
+          for (let i = 1; i <= 5; i++) {
+            setLoading(true, `결과 최적화 중… (재시도 ${i}/5)`);
+            const candidateResult = runSchedule(roleHardcapMode);
+            const candidateDeviations = calculateR1R2Deviations(candidateResult);
+            const candHardExceeds = countHardExceed(candidateResult, 75);
 
-        if (needsUnderfillFix(best) && roleHardcapMode === 'strict') {
-          let repaired = false;
-          for (let retry = 1; retry <= 2; retry += 1) {
-            const rerun = runSchedule('strict');
-            if (!needsUnderfillFix(rerun.schedule)) {
-              best = rerun.schedule;
-              bestEx = rerun.softExceed;
-              repaired = true;
-              break;
+            let isBetter = false;
+            if (candHardExceeds < minHardExceeds) {
+              isBetter = true;
+            } else if (candHardExceeds === minHardExceeds && candidateDeviations < minDeviations) {
+              isBetter = true;
             }
-          }
-          if (!repaired) {
-            const fallback = runSchedule('relaxed');
-            if (!needsUnderfillFix(fallback.schedule)) {
-              best = fallback.schedule;
-              bestEx = fallback.softExceed;
-              if (roleHardcapMode !== 'relaxed') {
-                setRoleHardcapMode('relaxed');
-                appendMessage('strict 하드캡으로 빈 슬롯이 발생해 완화 모드(±2)로 자동 전환했습니다.');
-              }
-            } else {
-              throw new Error('빈 슬롯을 채울 수 없습니다. 하드캡을 완화하거나 입력 제약을 확인해주세요.');
+
+            if (isBetter) {
+              bestResult = candidateResult;
+              minDeviations = candidateDeviations;
+              minHardExceeds = candHardExceeds;
             }
+            if (minDeviations === 0 && minHardExceeds === 0) break;
           }
         }
 
-        lastResult = best;
-        renderSummary(best);
+        lastResult = bestResult;
+        renderSummary(bestResult);
         const prev = getPreviousStatsFromUI();
-        renderReport(best, { previous: prev });
-        renderRoster(best);
+        renderReport(bestResult, { previous: prev });
+        renderRoster(bestResult);
         if (exportXlsxBtn) exportXlsxBtn.disabled = false;
         if (exportIcsBtn) exportIcsBtn.disabled = false;
 
-        if (bestEx > 0) {
-          const warnMsg = `주의: 일부 주의 72h 초과가 해소되지 않았습니다 (셀 ${bestEx}개). 설정을 조정하거나 인원을 늘려주세요.`;
+        const finalSoftExceeds = countSoftExceed(bestResult, 72);
+        if (finalSoftExceeds > 0) {
+          const warnMsg = `주의: 일부 주의 72h 초과가 해소되지 않았습니다 (셀 ${finalSoftExceeds}개). 설정을 조정하거나 인원을 늘려주세요.`;
           appendMessage(warnMsg);
-          try { alert(warnMsg); } catch {}
         }
-        if (exportXlsxBtn) exportXlsxBtn.disabled = false;
 
-        // 경고: 불가일/휴가 이름 확인
         const names = new Set(employees.map((e) => e.name));
         const unknownUnavail = [...dutyUnavailable.keys()].filter((n) => !names.has(n));
         const unknownDayoff = [...dayoffWish.keys()].filter((n) => !names.has(n));
@@ -249,6 +233,7 @@ function onGenerate() {
         if (unknownVacs.length) notes.push(`휴가 이름 불일치: ${unknownVacs.join(', ')}`);
         if (unknownPrior.length) notes.push(`전일 당직 이름 불일치: ${unknownPrior.join(', ')}`);
         notes.forEach((msg) => appendMessage(msg));
+
       } catch (err) {
         console.error(err);
         messages.textContent = err.message || String(err);
@@ -994,6 +979,40 @@ function countSoftExceed(result, limit = 72) {
     }
     return cnt;
   } catch { return 0; }
+}
+
+function countHardExceed(result, limit = 75) {
+  try {
+    let cnt = 0;
+    for (const s of result.stats || []) {
+      for (const wk of Object.keys(s.weeklyHours || {})) {
+        if ((s.weeklyHours[wk] || 0) > limit + 1e-9) cnt += 1;
+      }
+    }
+    return cnt;
+  } catch { return 0; }
+}
+
+function calculateR1R2Deviations(result) {
+  const { byungCount, eungCount } = computeRoleAndOffCounts(result);
+  const empById = new Map(result.employees.map((e) => [e.id, e]));
+  let deviationCount = 0;
+
+  for (const klass of ['R1', 'R2']) {
+    const peopleInClass = result.stats.filter(s => (empById.get(s.id)?.klass || '기타') === klass);
+    if (!peopleInClass.length) continue;
+
+    for (const role of [{ countMap: byungCount }, { countMap: eungCount }]) {
+      const counts = peopleInClass.map(p => role.countMap.get(p.id) || 0);
+      const avg = counts.reduce((a, b) => a + b, 0) / counts.length;
+      for (const count of counts) {
+        if (Math.abs(count - avg) >= 1.99) { // Use 1.99 to avoid float precision issues with 2
+          deviationCount++;
+        }
+      }
+    }
+  }
+  return deviationCount;
 }
 
 function parseVacationRanges(text) {
