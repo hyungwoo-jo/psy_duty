@@ -178,7 +178,7 @@ async function onGenerate() {
       const prior = getPriorDayDutyFromUI();
 
       const runSchedule = (mode) => {
-        const args = { startDate, endDate, weeks, weekMode, employees, holidays, dutyUnavailableByName: Object.fromEntries(dutyUnavailable), dayoffWishByName: Object.fromEntries(dayoffWish), vacationDaysByName: Object.fromEntries(vacations), priorDayDuty: prior, optimization, weekdaySlots, weekendSlots: 2, timeBudgetMs: budgetMs, roleHardcapMode: mode };
+        const args = { startDate, endDate, weeks, weekMode, employees, holidays, dutyUnavailableByName: Object.fromEntries(dutyUnavailable), dayoffWishByName: Object.fromEntries(dayoffWish), vacationDaysByName: Object.fromEntries(vacations), priorDayDuty: prior, optimization, weekdaySlots, weekendSlots: 2, timeBudgetMs: budgetMs, roleHardcapMode: mode, prevStats: prev };
         return generateSchedule(args);
       };
 
@@ -937,6 +937,7 @@ function buildPreviousAdjustRows(result, prev) {
 }
 
 function computeCarryoverDeltas(entries) {
+  console.log('[computeCarryoverDeltas] entries:', JSON.parse(JSON.stringify(entries)));
   if (!entries.length) return { deltas: [], base: 0 };
   const counts = entries.map(e => e.count);
   let base = counts[0] || 0;
@@ -964,6 +965,7 @@ function computeCarryoverDeltas(entries) {
       base = sorted.length % 2 === 0 ? sorted[mid - 1] : sorted[mid];
     }
   }
+  console.log(`[computeCarryoverDeltas] calculated base=${base}`);
 
   const deltas = entries.map(e => ({
     name: e.name,
@@ -972,6 +974,8 @@ function computeCarryoverDeltas(entries) {
   }))
   .filter(d => d.delta !== 0)
   .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta) || b.delta - a.delta);
+
+  console.log('[computeCarryoverDeltas] final deltas:', JSON.parse(JSON.stringify(deltas)));
 
   return { deltas, base };
 }

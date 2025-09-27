@@ -10,7 +10,7 @@ import { addDays, isWorkday, weekKey, fmtDate, rangeDays, weekKeyByMode, allWeek
 
 // preference: 'any' | 'weekday' | 'weekend'
 // optimization: 'off' | 'fast' | 'medium' | 'strong'
-export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMode = 'calendar', employees, holidays = [], dutyUnavailableByName = {}, dayoffWishByName = {}, vacationDaysByName = {}, priorDayDuty = { byung: '', eung: '' }, optimization = 'medium', weekdaySlots = 1, weekendSlots = 2, timeBudgetMs = 2000, roleHardcapMode = 'strict' }) {
+export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMode = 'calendar', employees, holidays = [], dutyUnavailableByName = {}, dayoffWishByName = {}, vacationDaysByName = {}, priorDayDuty = { byung: '', eung: '' }, optimization = 'medium', weekdaySlots = 1, weekendSlots = 2, timeBudgetMs = 2000, roleHardcapMode = 'strict', prevStats = null }) {
   if (!employees || employees.length < 2) {
     throw new Error('근무자는 2명 이상 필요합니다.');
   }
@@ -81,22 +81,47 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
     return slot === 0 ? (person._byung || 0) : (person._eung || 0);
   }
 
-  function violatesRoleCap(klass, slot, adjustments = new Map()) {
+  function violatesRoleCap(klass, slot, adjustments = new Map(), prevStats = null) {
     const limit = roleDeviationLimit(klass);
     if (!Number.isFinite(limit) || limit === Number.POSITIVE_INFINITY) return false;
     const members = membersByClass.get(klassKey(klass)) || [];
     if (!members.length) return false;
+
+    const prevDeltas = new Map();
+    if (prevStats) {
+      const roleKey = slot === 0 ? 'byung' : 'eung';
+      const prevList = (prevStats.entriesByClassRole.get(klass)?.[roleKey]) || [];
+      for (const entry of prevList) {
+        const p = members.find(m => m.name === entry.name);
+        if (p) prevDeltas.set(p.id, entry.delta || 0);
+      }
+    }
+
+    console.log(`[violatesRoleCap] klass=${klass}, slot=${slot}, limit=${limit}`);
+    console.log('[violatesRoleCap] prevDeltas:', prevDeltas);
+    console.log('[violatesRoleCap] members:', members.map(m => ({ id: m.id, name: m.name, current: getRoleCount(m, slot) })));
+
     let total = 0;
     for (const member of members) {
       const base = getRoleCount(member, slot);
-      total += base + (adjustments.get(member.id) || 0);
+      const prevDelta = prevDeltas.get(member.id) || 0;
+      total += base + prevDelta + (adjustments.get(member.id) || 0);
     }
     const avg = total / members.length;
+    console.log(`[violatesRoleCap] total=${total}, avg=${avg}`);
+
     for (const member of members) {
       const base = getRoleCount(member, slot);
-      const val = base + (adjustments.get(member.id) || 0);
-      if (Math.abs(val - avg) > limit + 1e-9) return true;
+      const prevDelta = prevDeltas.get(member.id) || 0;
+      const val = base + prevDelta + (adjustments.get(member.id) || 0);
+      const deviation = Math.abs(val - avg);
+      console.log(`[violatesRoleCap] member=${member.name}, val=${val}, deviation=${deviation}`);
+      if (deviation > limit + 1e-9) {
+        console.log(`[violatesRoleCap] VIOLATION! member=${member.name}, deviation=${deviation} > limit=${limit}`);
+        return true;
+      }
     }
+    console.log('[violatesRoleCap] OK');
     return false;
   }
 
@@ -272,7 +297,7 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
         continue;
       }
       const needKlass = requiredClassFor(cell.date, holidaySet, slot);
-      const result = pickCandidate({ index: i, date: cell.date, schedule, people, holidaySet, needKlass, slot });
+      const result = pickCandidate({ index: i, date: cell.date, schedule, people, holidaySet, needKlass, slot, prevStats });
 
       if (!result.person) {
         cell.underfilled = true; // 규칙 준수 내에서 미충원
@@ -597,7 +622,7 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
   // 베이스라인 정규근무는 0으로 모델링 (정규는 ledger 재계산에서 날짜별 2명만 +11h 반영)
   function baselineRegularForWeek() { return 0; }
 
-  function pickCandidate({ index, date, schedule, people, holidaySet, needKlass, slot }) {
+  function pickCandidate({ index, date, schedule, people, holidaySet, needKlass, slot, prevStats }) {
     const todayKey = fmtDate(date);
     const wk = weekKeyByMode(date, start, weekMode);
     const next = addDays(date, 1);
@@ -687,7 +712,25 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
         const totalHours = Object.values(p.weeklyHours).reduce((a, b) => a + b, 0);
         // 전날 당직 선호(weekday 불가일 보정): 해당 인원이 오늘 선호 대상이면 큰 보너스
         const preferBoost = prefToday.has(p.id) ? -1000 : 0;
-        return { p, score: [p.dutyCount + preferBoost, totalHours, p.weeklyHours[wk], -(index - p.lastDutyIndex)] };
+
+        let weekendPenalty = 0;
+        if (p.klass === 'R1') {
+          const dow = date.getDay(); // 0=Sun, 6=Sat
+          if (index > 0 && dow === 6) { // Saturday
+            const fridayDuties = schedule[index - 1]?.duties || [];
+            if (fridayDuties.some(d => d.id === p.id)) {
+              weekendPenalty = 100;
+            }
+          } else if (index > 1 && dow === 0) { // Sunday
+            const fridayDuties = schedule[index - 2]?.duties || [];
+            const saturdayDuties = schedule[index - 1]?.duties || [];
+            if (fridayDuties.some(d => d.id === p.id) || saturdayDuties.some(d => d.id === p.id)) {
+              weekendPenalty = 100;
+            }
+          }
+        }
+
+        return { p, score: [p.dutyCount + preferBoost + weekendPenalty, totalHours, p.weeklyHours[wk], -(index - p.lastDutyIndex)] };
       })
       .sort((a, b) => {
         for (let i = 0; i < a.score.length; i += 1) {
@@ -704,7 +747,7 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
       const totalCap = p.totalCapHours ?? (72 * weeks); // fallback
       if (totalNow + deltaTotal > totalCap + 1e-9) { stage.overTotal.push(p); continue; }
       const adj = new Map([[p.id, 1]]);
-      if (violatesRoleCap(p.klass, slot, adj)) { stage.roleCap.push(p); continue; }
+      if (violatesRoleCap(p.klass, slot, adj, prevStats)) { stage.roleCap.push(p); continue; }
       return { person: p, reasons: [] };
     }
 
@@ -767,10 +810,10 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
   }
 
   // 로컬 스왑 최적화
-  function optimizeBySA({ map, days, people, weekKeys, start, totalDays, holidaySet, level, timeBudgetMs = 2000 }) {
+  function optimizeBySA({ map, days, people, weekKeys, start, totalDays, holidaySet, level, timeBudgetMs = 2000, prevStats = null }) {
     // 초기 평가
     let current = map.map((arr) => arr.slice());
-    let best = evaluateMap(current);
+    let best = evaluateMap(current, prevStats);
     if (!best.valid) return null;
     let curObj = best.objective;
     let bestMap = current.map((a) => a.slice());
@@ -827,7 +870,7 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
         proposal[j][sj] = tmp;
       }
 
-      const evalRes = evaluateMap(proposal);
+      const evalRes = evaluateMap(proposal, prevStats);
       if (!evalRes.valid) {
         // 불만족 move는 버림
       } else {
@@ -853,7 +896,7 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
     }
     return { accepted: false };
 
-    function evaluateMap(assignMap) {
+    function evaluateMap(assignMap, prevStats) {
       // 사람 상태 초기화 (베이스라인 0; 정규는 후처리)
       const sim = people.map((p) => ({
         id: p.id,
@@ -875,6 +918,8 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
         lastDutyIndex: -999,
         offDayKeys: new Set(),
         regularOffDayKeys: new Set(),
+        _byung: 0,
+        _eung: 0,
       }));
 
       const warningsSim = [];
@@ -885,20 +930,33 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
         simMembersByClass.get(key).push(p);
       }
       const simRoleCount = (person, slot) => (slot === 0 ? (person._byung || 0) : (person._eung || 0));
-      function violatesSimRoleCap(klass, slot, adjustments = new Map()) {
+      function violatesSimRoleCap(klass, slot, adjustments = new Map(), prevStats = null) {
         const limit = roleDeviationLimit(klass);
         if (!Number.isFinite(limit) || limit === Number.POSITIVE_INFINITY) return false;
         const members = simMembersByClass.get(klassKey(klass)) || [];
         if (!members.length) return false;
+
+        const prevDeltas = new Map();
+        if (prevStats) {
+          const roleKey = slot === 0 ? 'byung' : 'eung';
+          const prevList = (prevStats.entriesByClassRole.get(klass)?.[roleKey]) || [];
+          for (const entry of prevList) {
+            const p = members.find(m => m.name === entry.name);
+            if (p) prevDeltas.set(p.id, entry.delta || 0);
+          }
+        }
+
         let total = 0;
         for (const member of members) {
           const base = simRoleCount(member, slot);
-          total += base + (adjustments.get(member.id) || 0);
+          const prevDelta = prevDeltas.get(member.id) || 0;
+          total += base + prevDelta + (adjustments.get(member.id) || 0);
         }
         const avg = total / members.length;
         for (const member of members) {
           const base = simRoleCount(member, slot);
-          const val = base + (adjustments.get(member.id) || 0);
+          const prevDelta = prevDeltas.get(member.id) || 0;
+          const val = base + prevDelta + (adjustments.get(member.id) || 0);
           if (Math.abs(val - avg) > limit + 1e-9) return true;
         }
         return false;
@@ -944,7 +1002,7 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
           const simToday = (p.weeklyHours[wk] ?? 0) + addDuty;
           if (simToday > WEEK_HARD_MAX + 1e-9) return { valid: false };
           const deltaMap = new Map([[p.id, 1]]);
-          if (violatesSimRoleCap(p.klass, s, deltaMap)) return { valid: false };
+          if (violatesSimRoleCap(p.klass, s, deltaMap, prevStats)) return { valid: false };
           // 적용
           p.weeklyHours[wk] = Math.max(0, simToday);
           p.dutyCount += 1;
