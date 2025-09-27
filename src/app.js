@@ -158,7 +158,6 @@ async function onGenerate() {
     disableActions(true);
     messages.textContent = '';
     
-    // Allow UI to render loading state before heavy computation
     await new Promise(resolve => setTimeout(resolve, 30));
 
     try {
@@ -184,16 +183,16 @@ async function onGenerate() {
       };
 
       let bestResult = runSchedule(roleHardcapMode);
-      let minDeviations = calculateR1R2Deviations(bestResult, prev);
+      let minDeviations = calculateScheduleDeviations(bestResult, prev);
       let minHardExceeds = countHardExceed(bestResult, 75);
 
       if (minDeviations > 0 || minHardExceeds > 0) {
-        for (let i = 1; i <= 5; i++) {
-          setLoading(true, `결과 최적화 중… (재시도 ${i}/5)`);
-          await new Promise(resolve => setTimeout(resolve, 0)); // Yield to event loop for UI update
+        for (let i = 1; i <= 15; i++) {
+          setLoading(true, `결과 최적화 중… (재시도 ${i}/15)`);
+          await new Promise(resolve => setTimeout(resolve, 0));
 
           const candidateResult = runSchedule(roleHardcapMode);
-          const candidateDeviations = calculateR1R2Deviations(candidateResult, prev);
+          const candidateDeviations = calculateScheduleDeviations(candidateResult, prev);
           const candHardExceeds = countHardExceed(candidateResult, 75);
 
           let isBetter = false;
@@ -996,11 +995,12 @@ function countHardExceed(result, limit = 75) {
   } catch { return 0; }
 }
 
-function calculateR1R2Deviations(result, prev) {
+function calculateScheduleDeviations(result, prev) {
   let deviationCount = 0;
   const { byungCount, eungCount } = computeRoleAndOffCounts(result);
   const empById = new Map(result.employees.map((e) => [e.id, e]));
 
+  // 1. R1 & R2 deviation check
   for (const klass of ['R1', 'R2']) {
     const peopleInClass = result.stats.filter(s => (empById.get(s.id)?.klass || '기타') === klass);
     if (!peopleInClass.length) continue;
@@ -1024,6 +1024,22 @@ function calculateR1R2Deviations(result, prev) {
       }
     }
   }
+
+  // 2. New R3 non-pediatric balancing check
+  const r3NonPediatric = result.employees.filter(p => p.klass === 'R3' && !p.pediatric);
+  if (r3NonPediatric.length === 2) {
+    const p1 = r3NonPediatric[0];
+    const p2 = r3NonPediatric[1];
+
+    const p1Byung = byungCount.get(p1.id) || 0;
+    const p2Byung = byungCount.get(p2.id) || 0;
+    deviationCount += Math.abs(p1Byung - p2Byung);
+
+    const p1Eung = eungCount.get(p1.id) || 0;
+    const p2Eung = eungCount.get(p2.id) || 0;
+    deviationCount += Math.abs(p1Eung - p2Eung);
+  }
+
   return deviationCount;
 }
 
