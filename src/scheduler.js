@@ -957,18 +957,40 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
           }
         }
 
-        let total = 0;
-        for (const member of members) {
-          const base = simRoleCount(member, slot);
-          const prevDelta = prevDeltas.get(member.id) || 0;
-          total += base + prevDelta + (adjustments.get(member.id) || 0);
+        const finalCounts = members.map(member => ({
+          name: member.name,
+          id: member.id,
+          count: (simRoleCount(member, slot) || 0) + (prevDeltas.get(member.id) || 0) + (adjustments.get(member.id) || 0),
+        }));
+
+        const counts = finalCounts.map(e => e.count);
+        let base = counts[0] || 0;
+        if (counts.length > 1) {
+          const freq = new Map();
+          counts.forEach(c => freq.set(c, (freq.get(c) || 0) + 1));
+          let maxFreq = 0;
+          let modes = [];
+          freq.forEach((f, val) => {
+            if (f > maxFreq) {
+              maxFreq = f;
+              modes = [val];
+            } else if (f === maxFreq) {
+              modes.push(val);
+            }
+          });
+          if (modes.length === 1 && maxFreq > 1) {
+            base = modes[0];
+          } else {
+            const sorted = [...counts].sort((a, b) => a - b);
+            const mid = Math.floor(sorted.length / 2);
+            base = sorted.length % 2 === 0 ? sorted[mid - 1] : sorted[mid];
+          }
         }
-        const avg = total / members.length;
-        for (const member of members) {
-          const base = simRoleCount(member, slot);
-          const prevDelta = prevDeltas.get(member.id) || 0;
-          const val = base + prevDelta + (adjustments.get(member.id) || 0);
-          if (Math.abs(val - avg) > limit + 1e-9) return true;
+
+        for (const entry of finalCounts) {
+          if (Math.abs(entry.count - base) > limit + 1e-9) {
+            return true; // VIOLATION
+          }
         }
         return false;
       }

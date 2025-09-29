@@ -273,7 +273,18 @@ async function onGenerate() {
 
       const needsUnderfillFix = (result) => result.schedule.some((day) => (day.duties?.length || 0) < 2 || day.underfilled);
       if (needsUnderfillFix(bestResult) && roleHardcapMode === 'strict') {
-        appendMessage('주의: Strict 모드에서 일부 슬롯을 채울 수 없었습니다. 제약이 너무 강할 수 있습니다. 완화 모드로 다시 시도해 보세요.');
+        appendMessage('최적 결과에 빈 슬롯 발생. 완화 모드로 재시도...');
+        await new Promise(resolve => setTimeout(resolve, 0));
+        
+        const relaxedResult = runSchedule('relaxed');
+        
+        if (!needsUnderfillFix(relaxedResult)) {
+          bestResult = relaxedResult;
+          setRoleHardcapMode('relaxed');
+          appendMessage('완화 모드로 빈 슬롯을 채웠습니다.');
+        } else {
+           appendMessage('완화 모드로도 빈 슬롯을 채울 수 없습니다. 입력 제약을 확인해주세요.');
+        }
       }
 
       lastResult = bestResult;
@@ -926,6 +937,7 @@ function buildPreviousAdjustRows(result, prev) {
 }
 
 function computeCarryoverDeltas(entries) {
+  console.log('[computeCarryoverDeltas] entries:', JSON.parse(JSON.stringify(entries)));
   if (!entries.length) return { deltas: [], base: 0 };
   const counts = entries.map(e => e.count);
   let base = counts[0] || 0;
@@ -953,6 +965,7 @@ function computeCarryoverDeltas(entries) {
       base = sorted.length % 2 === 0 ? sorted[mid - 1] : sorted[mid];
     }
   }
+  console.log(`[computeCarryoverDeltas] calculated base=${base}`);
 
   const deltas = entries.map(e => ({
     name: e.name,
@@ -961,6 +974,8 @@ function computeCarryoverDeltas(entries) {
   }))
   .filter(d => d.delta !== 0)
   .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta) || b.delta - a.delta);
+
+  console.log('[computeCarryoverDeltas] final deltas:', JSON.parse(JSON.stringify(deltas)));
 
   return { deltas, base };
 }
