@@ -196,15 +196,16 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
   function applyPriorDayDutyOff() {
     priorDutyCooldownIds.clear();
     try {
-      const prev = addDays(start, -1);
-      const prevIsWork = isWorkday(prev, holidaySet);
+      const startIsWork = isWorkday(start, holidaySet);
       const startKey = fmtDate(start);
       const names = new Set([priorDayDuty?.byung || '', priorDayDuty?.eung || ''].filter(Boolean));
       for (const p of people) {
         if (!names.has(p.name)) continue;
         priorDutyCooldownIds.add(p.id);
-        if (prevIsWork) {
+        if (startIsWork) {
           p.regularOffDayKeys.add(startKey);
+        } else {
+          p.offDayKeys.add(startKey);
         }
       }
     } catch {}
