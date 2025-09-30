@@ -417,6 +417,96 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
     }
   }
 
+  const totalHoursOf = (person) => Object.values(person.weeklyHours || {}).reduce((acc, v) => acc + (v || 0), 0);
+
+  function slotFilled(index, slot) {
+    const need = requiredClassFor(schedule[index].date, holidaySet, slot);
+    return (schedule[index].duties || []).some((d) => {
+      const person = people.find((p) => p.id === d?.id);
+      return person?.klass === need;
+    });
+  }
+
+  function canAssignPersonToSlot(person, index, slot, { ignoreOffday = false, ignoreCooldown = false } = {}) {
+    const cell = schedule[index];
+    const date = cell.date;
+    const key = fmtDate(date);
+    const need = requiredClassFor(date, holidaySet, slot);
+    if ((person.klass || '') !== need) return false;
+    if (cell.duties?.some((d) => d?.id === person.id)) return false;
+    if (person.vacationDays?.has(key)) return false;
+    if (person.dutyUnavailable?.has(key)) return false;
+    if (!ignoreOffday && person.offDayKeys?.has(key)) return false;
+    if (!ignoreOffday && person.regularOffDayKeys?.has(key)) return false;
+    if (!ignoreCooldown && priorDutyCooldownIds.has(person.id) && index === 0) return false;
+    const forced = preAssigned[index]?.[slot];
+    if (forced && forced.id !== person.id) return false;
+    if (index > 0) {
+      const prev = schedule[index - 1]?.duties || [];
+      if (prev.some((d) => d?.id === person.id)) return false;
+    }
+    if (index + 1 < schedule.length) {
+      const next = schedule[index + 1]?.duties || [];
+      if (next.some((d) => d?.id === person.id)) return false;
+    }
+    return true;
+  }
+
+  function pickEmergencyCandidate(index, slot) {
+    const date = schedule[index].date;
+    const key = fmtDate(date);
+    const need = requiredClassFor(date, holidaySet, slot);
+    const base = people.filter((p) => (p.klass || '') === need);
+    const attemptLevels = [
+      { ignoreOffday: false, ignoreCooldown: false },
+      { ignoreOffday: true, ignoreCooldown: false },
+      { ignoreOffday: true, ignoreCooldown: true },
+    ];
+    for (const level of attemptLevels) {
+      const pool = base.filter((p) => {
+        if (schedule[index].duties?.some((d) => d?.id === p.id)) return false;
+        if (p.vacationDays?.has(key) || p.dutyUnavailable?.has(key)) return false;
+        if (!canAssignPersonToSlot(p, index, slot, level)) return false;
+        return true;
+      });
+      if (!pool.length) continue;
+      pool.sort((a, b) => (totalHoursOf(a) - totalHoursOf(b)) || ((a.dutyCount || 0) - (b.dutyCount || 0)) || (a.id - b.id));
+      return pool[0];
+    }
+    return null;
+  }
+
+  function fillUnderfilledSlots() {
+    for (let i = 0; i < schedule.length; i += 1) {
+      const cell = schedule[i];
+      const requiredSlots = isWorkday(cell.date, holidaySet) ? weekdaySlots : weekendSlots;
+      let filledAll = true;
+      for (let slot = 0; slot < requiredSlots; slot += 1) {
+        if (slotFilled(i, slot)) continue;
+        let person = null;
+        const forced = preAssigned[i]?.[slot];
+        if (forced) {
+          person = people.find((p) => p.id === forced.id) || null;
+        }
+        if (!person) {
+          person = pickEmergencyCandidate(i, slot);
+        }
+        if (!person) {
+          filledAll = false;
+          continue;
+        }
+        if (!cell.duties) cell.duties = [];
+        cell.duties.push({ id: person.id, name: person.name, slot });
+        applyAssignment({ person, index: i, date: cell.date, holidaySet, slot });
+      }
+      if (cell.duties && cell.duties.length) {
+        cell.duties = cell.duties.slice().sort((a, b) => (a.slot || 0) - (b.slot || 0));
+      }
+      cell.underfilled = !filledAll;
+      if (filledAll) delete cell.reasons;
+    }
+  }
+
   function getRoleCount(person, slot) {
     return slot === 0 ? (person._byung || 0) : (person._eung || 0);
   }
