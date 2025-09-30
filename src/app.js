@@ -174,6 +174,7 @@ function parseUnavailable(text) {
 }
 
 async function onGenerate() {
+  const initialMode = roleHardcapMode;
   try {
     setLoading(true, '당직표 생성 중… 잠시만 기다려주세요');
     disableActions(true);
@@ -198,9 +199,10 @@ async function onGenerate() {
       const vacations = parseVacationRanges(vacationsInput.value);
       const prior = getPriorDayDutyFromUI();
 
-      const runSchedule = (mode, seed) => {
+      const runSchedule = (mode, seed, options = {}) => {
         const randomSeed = Number.isFinite(seed) ? seed : nextRandomSeed();
-        const args = { startDate, endDate, weeks, weekMode, employees, holidays, dutyUnavailableByName: Object.fromEntries(dutyUnavailable), dayoffWishByName: Object.fromEntries(dayoffWish), vacationDaysByName: Object.fromEntries(vacations), priorDayDuty: prior, optimization, weekdaySlots, weekendSlots: 2, timeBudgetMs: budgetMs, roleHardcapMode: mode, prevStats: prev, randomSeed };
+        const timeBudgetOverride = Number.isFinite(options.timeBudgetMs) ? options.timeBudgetMs : budgetMs;
+        const args = { startDate, endDate, weeks, weekMode, employees, holidays, dutyUnavailableByName: Object.fromEntries(dutyUnavailable), dayoffWishByName: Object.fromEntries(dayoffWish), vacationDaysByName: Object.fromEntries(vacations), priorDayDuty: prior, optimization, weekdaySlots, weekendSlots: 2, timeBudgetMs: timeBudgetOverride, roleHardcapMode: mode, prevStats: prev, randomSeed };
         return generateSchedule(args);
       };
 
@@ -247,8 +249,73 @@ async function onGenerate() {
         return score;
       }
 
-      let bestResult = runSchedule(roleHardcapMode);
-      let bestNeedsUnderfill = needsUnderfillFix(bestResult);
+      const countRoleHardcapViolations = (result, prev) => {
+        try {
+          const { byungCount, eungCount } = computeRoleAndOffCounts(result);
+          const empById = new Map(result.employees.map((e) => [e.id, e]));
+          const entriesByClassRole = prev?.entriesByClassRole || new Map();
+          const roleMode = result?.config?.roleHardcapMode || 'strict';
+          const limitForClass = (klass) => {
+            if (!klass) return Number.POSITIVE_INFINITY;
+            if (klass === 'R3') return 2;
+            return roleMode === 'relaxed' ? 2 : 1;
+          };
+
+          let violations = 0;
+          const seenKlasses = new Set();
+          for (const stat of result.stats || []) {
+            const klass = empById.get(stat.id)?.klass || '';
+            seenKlasses.add(klass);
+          }
+
+          for (const klass of seenKlasses) {
+            if (klass === 'R3') continue;
+            const klassLimit = limitForClass(klass);
+            if (!Number.isFinite(klassLimit)) continue;
+
+            for (const role of [{ key: 'byung', map: byungCount }, { key: 'eung', map: eungCount }]) {
+              const peopleInClass = (result.stats || []).filter((s) => (empById.get(s.id)?.klass || '') === klass);
+              if (!peopleInClass.length) continue;
+
+              const prevList = (entriesByClassRole.get(klass)?.[role.key]) || [];
+              const prevByName = new Map(prevList.map((e) => [e.name, Number(e.delta) || 0]));
+
+              const finalCounts = peopleInClass.map((p) => ({
+                id: p.id,
+                name: p.name,
+                count: (Number(role.map.get(p.id) || 0)) + (prevByName.get(p.name) || 0),
+              }));
+
+              const { deltas } = computeCarryoverDeltas(finalCounts);
+              for (const d of deltas) {
+                if (Math.abs(d.delta) > klassLimit + 1e-9) violations += 1;
+              }
+            }
+          }
+
+          // R3는 전월 보정 없이, 비소아 인원끼리의 편차가 2를 넘으면 위반
+          const r3NonPediatric = (result.employees || []).filter((e) => e.klass === 'R3' && !e.pediatric);
+          if (r3NonPediatric.length > 1) {
+            const ids = r3NonPediatric.map((e) => e.id);
+            const byCounts = ids.map((id) => Number(byungCount.get(id) || 0));
+            const euCounts = ids.map((id) => Number(eungCount.get(id) || 0));
+            const maxDiff = (arr) => Math.max(...arr) - Math.min(...arr);
+            if (maxDiff(byCounts) > 2 + 1e-9) violations += 1;
+            if (maxDiff(euCounts) > 2 + 1e-9) violations += 1;
+          }
+
+          return violations;
+        } catch (err) {
+          console.error(err);
+          return Number.POSITIVE_INFINITY;
+        }
+      };
+
+      let bestResult = null;
+      let bestNeedsUnderfill = true;
+      let bestSoftExceeds = Number.POSITIVE_INFINITY;
+      let bestHardExceeds = Number.POSITIVE_INFINITY;
+      let bestRoleViolations = Number.POSITIVE_INFINITY;
 
       if (roleHardcapMode === 'strict') {
         const getCompositeScore = (result, prev) => {
@@ -257,59 +324,98 @@ async function onGenerate() {
           const hardExceeds = countHardExceed(result, 75);
           return (hardExceeds * 1000) + (fairnessScore * 100) + softExceeds;
         };
+        const evaluateStrict = (result) => ({
+          result,
+          soft: countSoftExceed(result, 72),
+          hard: countHardExceed(result, 75),
+          underfill: needsUnderfillFix(result),
+          roleViolations: countRoleHardcapViolations(result, prev),
+          composite: getCompositeScore(result, prev),
+        });
+        const isFeasibleStrict = (meta) => meta && meta.hard === 0 && meta.roleViolations === 0 && !meta.underfill;
+        const totalSessions = 15;
+        const boostedBudget = Math.max(budgetMs * 1.5, budgetMs + 3000);
 
-        const maxAttempts = 50;
-        let bestCompositeScore = getCompositeScore(bestResult, prev);
-        let bestSoftExceeds = countSoftExceed(bestResult, 72);
+        const compareMeta = (a, b) => {
+          if (!b) return -1;
+          if (!a) return 1;
+          const metrics = [
+            (m) => Number(m.underfill ? 1 : 0),
+            (m) => m.roleViolations,
+            (m) => m.hard,
+            (m) => m.soft,
+            (m) => m.composite,
+          ];
+          for (const metric of metrics) {
+            const diff = metric(a) - metric(b);
+            if (Math.abs(diff) > 1e-9) return diff < 0 ? -1 : 1;
+          }
+          return 0;
+        };
 
-        if (bestSoftExceeds > 0 || bestNeedsUnderfill) {
-          let attemptsPerformed = 0;
-          for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-            setLoading(true, `결과 최적화 중… (재시도 ${attempt}/${maxAttempts})`);
+        const feasibleMetas = [];
+
+        for (let session = 1; session <= totalSessions; session += 1) {
+          let sessionBest = null;
+          let attempt = 0;
+
+          while (true) {
+            attempt += 1;
+            const useBudget = attempt > 30 ? boostedBudget : budgetMs;
+            if (attempt % 100 === 1) {
+              setLoading(true, `결과 최적화 중… (strict ${session}/${totalSessions}, 시도 ${attempt})`);
+            }
             await new Promise(resolve => setTimeout(resolve, 0));
 
-            const candidateResult = runSchedule(roleHardcapMode);
-            const candidateSoftExceeds = countSoftExceed(candidateResult, 72);
-            const candidateNeedsUnderfill = needsUnderfillFix(candidateResult);
-            const candidateCompositeScore = getCompositeScore(candidateResult, prev);
-
-            if (
-              candidateSoftExceeds < bestSoftExceeds ||
-              (candidateSoftExceeds === bestSoftExceeds && Number(candidateNeedsUnderfill) < Number(bestNeedsUnderfill)) ||
-              (
-                candidateSoftExceeds === bestSoftExceeds &&
-                Number(candidateNeedsUnderfill) === Number(bestNeedsUnderfill) &&
-                candidateCompositeScore < bestCompositeScore
-              )
-            ) {
-              bestResult = candidateResult;
-              bestSoftExceeds = candidateSoftExceeds;
-              bestNeedsUnderfill = candidateNeedsUnderfill;
-              bestCompositeScore = candidateCompositeScore;
+            const candidateMeta = evaluateStrict(runSchedule('strict', null, { timeBudgetMs: useBudget }));
+            if (!sessionBest || compareMeta(candidateMeta, sessionBest) < 0) {
+              sessionBest = candidateMeta;
             }
 
-            attemptsPerformed = attempt;
-
-            if (bestSoftExceeds === 0 && !bestNeedsUnderfill) {
-              appendMessage(`72h 초과·빈 슬롯 없이 생성 성공 (재시도 ${attempt}회)`);
+            if (isFeasibleStrict(candidateMeta)) {
+              feasibleMetas.push({ meta: candidateMeta, attempts: attempt });
+              appendMessage(`strict ${session}/${totalSessions} 성공 (시도 ${attempt}회, 72h 초과 ${candidateMeta.soft}개)`);
               break;
             }
-          }
 
-          if (bestSoftExceeds > 0 || bestNeedsUnderfill) {
-            appendMessage(`72h 미초과/빈 슬롯 해소 실패 (재시도 ${attemptsPerformed}/${maxAttempts}) — 최적 후보를 사용합니다.`);
+            if (candidateMeta.soft === 0 && candidateMeta.hard === 0 && !candidateMeta.underfill && candidateMeta.roleViolations === 0) {
+              feasibleMetas.push({ meta: candidateMeta, attempts: attempt });
+              appendMessage(`strict ${session}/${totalSessions} 성공 (시도 ${attempt}회, 하드 제약 통과)`);
+              break;
+            }
+
+            if (attempt % 100 === 0) {
+              const best = sessionBest;
+              const detail = best
+                ? `빈 슬롯 ${best.underfill ? '있음' : '없음'} · 역할 편차 ${best.roleViolations} · 75h ${best.hard} · 72h ${best.soft}`
+                : '아직 후보 없음';
+              appendMessage(`strict ${session}/${totalSessions} 진행 중 (시도 ${attempt}회, 현재 최선: ${detail})`);
+            }
           }
         }
+
+        const finalEntry = feasibleMetas.reduce((best, entry) => (compareMeta(entry.meta, best.meta) < 0 ? entry : best));
+        bestResult = finalEntry.meta.result;
+        bestNeedsUnderfill = finalEntry.meta.underfill;
+        bestSoftExceeds = finalEntry.meta.soft;
+        bestHardExceeds = finalEntry.meta.hard;
+        bestRoleViolations = finalEntry.meta.roleViolations;
+        if (feasibleMetas.length === totalSessions) {
+          appendMessage('strict 조건을 만족하는 15개 후보를 확보했습니다. 최적 스케줄을 선택합니다.');
+        } else {
+          appendMessage(`strict 조건을 만족한 세션 ${feasibleMetas.length}개. 최적 스케줄을 선택합니다.`);
+        }
       } else { // relaxed mode
+        bestResult = runSchedule(roleHardcapMode);
         let bestScore = calculateScore(bestResult, prev);
         if (bestScore > 0) {
           for (let i = 1; i <= 15; i++) {
             setLoading(true, `결과 최적화 중… (재시도 ${i}/15)`);
             await new Promise(resolve => setTimeout(resolve, 0));
-  
+
             const candidateResult = runSchedule(roleHardcapMode);
             const candidateScore = calculateScore(candidateResult, prev);
-  
+
             if (candidateScore < bestScore) {
               bestResult = candidateResult;
               bestScore = candidateScore;
@@ -317,22 +423,27 @@ async function onGenerate() {
             if (bestScore === 0) break;
           }
         }
+        bestNeedsUnderfill = needsUnderfillFix(bestResult);
+        bestSoftExceeds = countSoftExceed(bestResult, 72);
+        bestHardExceeds = countHardExceed(bestResult, 75);
+        bestRoleViolations = countRoleHardcapViolations(bestResult, prev);
+      }
+
+      if (!bestResult) {
+        throw new Error('스케줄 생성에 실패했습니다. 입력 제약을 확인해주세요.');
       }
 
       bestNeedsUnderfill = needsUnderfillFix(bestResult);
-      if (bestNeedsUnderfill && roleHardcapMode === 'strict') {
-        appendMessage('최적 결과에 빈 슬롯 발생. 완화 모드로 재시도...');
-        await new Promise(resolve => setTimeout(resolve, 0));
-        
-        const relaxedResult = runSchedule('relaxed');
-        
-        if (!needsUnderfillFix(relaxedResult)) {
-          bestResult = relaxedResult;
-          setRoleHardcapMode('relaxed');
-          appendMessage('완화 모드로 빈 슬롯을 채웠습니다.');
-        } else {
-           appendMessage('완화 모드로도 빈 슬롯을 채울 수 없습니다. 입력 제약을 확인해주세요.');
-        }
+      bestSoftExceeds = countSoftExceed(bestResult, 72);
+      bestHardExceeds = countHardExceed(bestResult, 75);
+      bestRoleViolations = countRoleHardcapViolations(bestResult, prev);
+
+      if ((bestNeedsUnderfill || bestHardExceeds > 0 || bestRoleViolations > 0) && roleHardcapMode === 'strict') {
+        const reasons = [];
+        if (bestNeedsUnderfill) reasons.push('빈 슬롯');
+        if (bestHardExceeds > 0) reasons.push('75h 초과');
+        if (bestRoleViolations > 0) reasons.push('역할 편차 ±1 초과');
+        throw new Error(`strict 모드에서 하드 제약을 충족하는 결과를 얻지 못했습니다 (${reasons.join(' · ')}). 입력 제약을 확인해주세요.`);
       }
 
       lastResult = bestResult;
@@ -346,6 +457,12 @@ async function onGenerate() {
       if (finalSoftExceeds > 0) {
         const warnMsg = `주의: 일부 주의 72h 초과가 해소되지 않았습니다 (셀 ${finalSoftExceeds}개). 설정을 조정하거나 인원을 늘려주세요.`;
         appendMessage(warnMsg);
+      }
+      if (bestHardExceeds > 0) {
+        appendMessage(`경고: 일부 주가 75h 하드 상한을 초과했습니다 (셀 ${bestHardExceeds}개). 입력이나 제약을 재검토해주세요.`);
+      }
+      if (bestRoleViolations > 0) {
+        appendMessage(`경고: 역할 편차가 허용 범위를 초과했습니다 (사례 ${bestRoleViolations}건). 입력 조건을 조정해주세요.`);
       }
 
       const names = new Set(employees.map((e) => e.name));
@@ -377,6 +494,9 @@ async function onGenerate() {
     disableActions(false);
     if (exportXlsxBtn) exportXlsxBtn.disabled = true;
     if (exportIcsBtn) exportIcsBtn.disabled = true;
+  } finally {
+    // 실행 중 임시로 바뀐 모드를 원래대로 복구해 다음 시도도 동일한 조건에서 시작
+    if (roleHardcapMode !== initialMode) setRoleHardcapMode(initialMode);
   }
 }
 

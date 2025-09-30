@@ -89,6 +89,96 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
 
   const priorDutyCooldownIds = new Set();
 
+  const totalHoursOf = (person) => Object.values(person.weeklyHours || {}).reduce((acc, v) => acc + (v || 0), 0);
+
+  function slotFilled(index, slot) {
+    const need = requiredClassFor(schedule[index].date, holidaySet, slot);
+    return (schedule[index].duties || []).some((d) => {
+      const person = people.find((p) => p.id === d?.id);
+      return person?.klass === need;
+    });
+  }
+
+  function canAssignPersonToSlot(person, index, slot, { ignoreOffday = false, ignoreCooldown = false } = {}) {
+    const cell = schedule[index];
+    const date = cell.date;
+    const key = fmtDate(date);
+    const need = requiredClassFor(date, holidaySet, slot);
+    if ((person.klass || '') !== need) return false;
+    if (cell.duties?.some((d) => d?.id === person.id)) return false;
+    if (person.vacationDays?.has(key)) return false;
+    if (person.dutyUnavailable?.has(key)) return false;
+    if (!ignoreOffday && person.offDayKeys?.has(key)) return false;
+    if (!ignoreOffday && person.regularOffDayKeys?.has(key)) return false;
+    if (!ignoreCooldown && priorDutyCooldownIds.has(person.id) && index === 0) return false;
+    const forced = preAssigned[index]?.[slot];
+    if (forced && forced.id !== person.id) return false;
+    if (index > 0) {
+      const prev = schedule[index - 1]?.duties || [];
+      if (prev.some((d) => d?.id === person.id)) return false;
+    }
+    if (index + 1 < schedule.length) {
+      const next = schedule[index + 1]?.duties || [];
+      if (next.some((d) => d?.id === person.id)) return false;
+    }
+    return true;
+  }
+
+  function pickEmergencyCandidate(index, slot) {
+    const date = schedule[index].date;
+    const key = fmtDate(date);
+    const need = requiredClassFor(date, holidaySet, slot);
+    const base = people.filter((p) => (p.klass || '') === need);
+    const attemptLevels = [
+      { ignoreOffday: false, ignoreCooldown: false },
+      { ignoreOffday: true, ignoreCooldown: false },
+      { ignoreOffday: true, ignoreCooldown: true },
+    ];
+    for (const level of attemptLevels) {
+      const pool = base.filter((p) => {
+        if (schedule[index].duties?.some((d) => d?.id === p.id)) return false;
+        if (p.vacationDays?.has(key) || p.dutyUnavailable?.has(key)) return false;
+        if (!canAssignPersonToSlot(p, index, slot, level)) return false;
+        return true;
+      });
+      if (!pool.length) continue;
+      pool.sort((a, b) => (totalHoursOf(a) - totalHoursOf(b)) || ((a.dutyCount || 0) - (b.dutyCount || 0)) || (a.id - b.id));
+      return pool[0];
+    }
+    return null;
+  }
+
+  function fillUnderfilledSlots() {
+    for (let i = 0; i < schedule.length; i += 1) {
+      const cell = schedule[i];
+      const requiredSlots = isWorkday(cell.date, holidaySet) ? weekdaySlots : weekendSlots;
+      let filledAll = true;
+      for (let slot = 0; slot < requiredSlots; slot += 1) {
+        if (slotFilled(i, slot)) continue;
+        let person = null;
+        const forced = preAssigned[i]?.[slot];
+        if (forced) {
+          person = people.find((p) => p.id === forced.id) || null;
+        }
+        if (!person) {
+          person = pickEmergencyCandidate(i, slot);
+        }
+        if (!person) {
+          filledAll = false;
+          continue;
+        }
+        if (!cell.duties) cell.duties = [];
+        cell.duties.push({ id: person.id, name: person.name, slot });
+        applyAssignment({ person, index: i, date: cell.date, holidaySet, slot });
+      }
+      if (cell.duties && cell.duties.length) {
+        cell.duties = cell.duties.slice().sort((a, b) => (a.slot || 0) - (b.slot || 0));
+      }
+      cell.underfilled = !filledAll;
+      if (filledAll) delete cell.reasons;
+    }
+  }
+
   function getRoleCount(person, slot) {
     return slot === 0 ? (person._byung || 0) : (person._eung || 0);
   }
@@ -196,15 +286,16 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
   function applyPriorDayDutyOff() {
     priorDutyCooldownIds.clear();
     try {
-      const prev = addDays(start, -1);
-      const prevIsWork = isWorkday(prev, holidaySet);
+      const startIsWork = isWorkday(start, holidaySet);
       const startKey = fmtDate(start);
       const names = new Set([priorDayDuty?.byung || '', priorDayDuty?.eung || ''].filter(Boolean));
       for (const p of people) {
         if (!names.has(p.name)) continue;
         priorDutyCooldownIds.add(p.id);
-        if (prevIsWork) {
+        if (startIsWork) {
           p.regularOffDayKeys.add(startKey);
+        } else {
+          p.offDayKeys.add(startKey);
         }
       }
     } catch {}
@@ -318,7 +409,7 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
       // 사전 강제 배치가 있으면 우선 적용
       if (preAssigned[i][slot]) {
         const forced = preAssigned[i][slot];
-        cell.duties.push({ id: forced.id, name: forced.name });
+        cell.duties.push({ id: forced.id, name: forced.name, slot });
         const person = people.find((pp) => pp.id === forced.id);
         if (person) applyAssignment({ person, index: i, date: cell.date, holidaySet, slot });
         continue;
@@ -334,10 +425,12 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
         continue;
       }
       const picked = result.person;
-      cell.duties.push({ id: picked.id, name: picked.name });
+      cell.duties.push({ id: picked.id, name: picked.name, slot });
       applyAssignment({ person: picked, index: i, date: cell.date, holidaySet, slot });
     }
   }
+
+  fillUnderfilledSlots();
 
   // 선택적 최적화 (총근무시간/주별 편차 완화)
   const map = schedule.map((d) => d.duties.map((x) => x.id));
@@ -351,7 +444,7 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
     let bestOpt = null;
     while (tries < baseAttempts && (Date.now() - startTs) < timeBudget) {
       const remainingMs = timeBudget - (Date.now() - startTs);
-      const res = optimizeBySA({ map, days, people, weekKeys, start, totalDays, holidaySet, level: optimization, timeBudgetMs: remainingMs });
+      const res = optimizeBySA({ map, days, people, weekKeys, start, totalDays, holidaySet, level: optimization, timeBudgetMs: remainingMs, prevStats });
       tries += 1;
       if (res && res.accepted) {
         if (!bestOpt || res.objective < bestOpt.objective) bestOpt = res;
@@ -359,20 +452,19 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
     }
     if (bestOpt) {
       for (let i = 0; i < schedule.length; i += 1) {
-        // 기본은 최적화 결과를 채우되, 사전 강제배치는 보존
         const forced = preAssigned[i] || [null, null];
         const row = (bestOpt.map[i] || []).slice();
         for (let s = 0; s < 2; s += 1) {
-          if (forced[s]) {
-            row[s] = forced[s].id; // 강제 id로 고정
-          }
+          if (forced[s]) row[s] = forced[s].id;
         }
-        schedule[i].duties = row
-          .filter((v) => v != null)
-          .map((id) => {
-            const p = people.find((pp) => pp.id === id);
-            return { id: p.id, name: p.name };
-          });
+        const assignments = [];
+        for (let s = 0; s < row.length; s += 1) {
+          const id = row[s];
+          if (id == null) continue;
+          const p = people.find((pp) => pp.id === id);
+          if (p) assignments.push({ id: p.id, name: p.name, slot: s });
+        }
+        schedule[i].duties = assignments;
       }
       applyPeopleState(people, bestOpt.peopleSim);
       warnings.push(...bestOpt.warningsAfter);
@@ -505,8 +597,6 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
         const d1 = (schedule[i].duties || [])[1]; if (d1) euCount.set(d1.id, (euCount.get(d1.id) || 0) + 1);
       }
     }
-    recomputeRoleCounts();
-
     function classAvgBy(slot, klass, deltaOverrides = new Map()) {
       // 평균 병당/응당 카운트(스왑 검증용)
       const ids = people.filter((p) => p.klass === klass).map((p) => p.id);
@@ -515,6 +605,7 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
     }
 
     while (guard++ < 50) {
+      recomputeRoleCounts();
       const dayOffMap = computeDayOffMap();
       // 연차별로 고/저 선택
       const byClass = new Map();
@@ -588,6 +679,18 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
               schedule[i].duties[slot] = { id: dutyJ.id, name: dutyJ.name };
               schedule[j].duties[slot] = { id: dutyI.id, name: dutyI.name };
               rebuildFromLedger();
+
+              const limit = roleDeviationLimit(klass);
+              const violates = Number.isFinite(limit) && violatesRoleCap(klass, slot, new Map(), prevStats);
+              if (violates) {
+                // 하드캡을 넘으면 롤백하고 다른 후보 탐색
+                schedule[i].duties[slot] = dutyI;
+                schedule[j].duties[slot] = dutyJ;
+                rebuildFromLedger();
+                continue;
+              }
+
+              recomputeRoleCounts();
               improved = true; found = true;
               break outer;
             }
@@ -741,26 +844,21 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
     }
     pool = afterCap;
 
-    const candidates = pool
+    const scoreCandidates = (candidatePool) => candidatePool
       .map((p) => {
         const totalHours = Object.values(p.weeklyHours).reduce((a, b) => a + b, 0);
-        // 전날 당직 선호(weekday 불가일 보정): 해당 인원이 오늘 선호 대상이면 큰 보너스
         const preferBoost = prefToday.has(p.id) ? -1000 : 0;
 
         let weekendPenalty = 0;
         if (p.klass === 'R1') {
-          const dow = date.getDay(); // 0=Sun, 6=Sat
-          if (index > 0 && dow === 6) { // Saturday
+          const dow = date.getDay();
+          if (index > 0 && dow === 6) {
             const fridayDuties = schedule[index - 1]?.duties || [];
-            if (fridayDuties.some(d => d.id === p.id)) {
-              weekendPenalty = 100;
-            }
-          } else if (index > 1 && dow === 0) { // Sunday
+            if (fridayDuties.some(d => d.id === p.id)) weekendPenalty = 100;
+          } else if (index > 1 && dow === 0) {
             const fridayDuties = schedule[index - 2]?.duties || [];
             const saturdayDuties = schedule[index - 1]?.duties || [];
-            if (fridayDuties.some(d => d.id === p.id) || saturdayDuties.some(d => d.id === p.id)) {
-              weekendPenalty = 100;
-            }
+            if (fridayDuties.some(d => d.id === p.id) || saturdayDuties.some(d => d.id === p.id)) weekendPenalty = 100;
           }
         }
 
@@ -774,15 +872,35 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
       })
       .map((x) => x.p);
 
-    for (const p of candidates) {
-      // 총합 상한 체크 (정규는 후처리이므로 여기서는 당직 영향만 고려)
-      const totalNow = Object.values(p.weeklyHours).reduce((a, b) => a + b, 0);
-      const deltaTotal = (isTodayWorkday ? 13.5 : 21);
-      const totalCap = p.totalCapHours ?? (72 * weeks); // fallback
-      if (totalNow + deltaTotal > totalCap + 1e-9) { stage.overTotal.push(p); continue; }
-      const adj = new Map([[p.id, 1]]);
-      if (violatesRoleCap(p.klass, slot, adj, prevStats)) { stage.roleCap.push(p); continue; }
-      return { person: p, reasons: [] };
+    const tryPick = (candidatePool, { allowRoleCap = false, allowWeekHard = false, allowTotalCap = false } = {}) => {
+      if (!candidatePool || !candidatePool.length) return null;
+      const ordered = scoreCandidates(candidatePool);
+      for (const p of ordered) {
+        const addDuty = isTodayWorkday ? 13.5 : 21;
+        if (!allowWeekHard) {
+          const simToday = (p.weeklyHours[wk] ?? 0) + addDuty;
+          if (simToday > WEEK_HARD_MAX + 1e-9) { stage.overWeek_today.push(p); continue; }
+        }
+
+        const totalNow = Object.values(p.weeklyHours).reduce((a, b) => a + b, 0);
+        const totalCap = p.totalCapHours ?? (72 * weeks);
+        if (!allowTotalCap && totalNow + addDuty > totalCap + 1e-9) { stage.overTotal.push(p); continue; }
+
+        const adj = new Map([[p.id, 1]]);
+        if (!allowRoleCap && violatesRoleCap(p.klass, slot, adj, prevStats)) { stage.roleCap.push(p); continue; }
+
+        return p;
+      }
+      return null;
+    };
+
+    let chosen = tryPick(pool);
+    if (!chosen) chosen = tryPick(stage.roleCap.slice(), { allowRoleCap: true });
+    if (!chosen) chosen = tryPick([...stage.overWeek_today, ...stage.overWeek_next], { allowRoleCap: true, allowWeekHard: true });
+    if (!chosen) chosen = tryPick(stage.overTotal.slice(), { allowRoleCap: true, allowWeekHard: true, allowTotalCap: true });
+
+    if (chosen) {
+      return { person: chosen, reasons: [] };
     }
 
     const reasons = [];
