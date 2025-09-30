@@ -60,6 +60,27 @@ document.querySelector('#load-kr-holidays')?.addEventListener('click', () => loa
 document.querySelector('#clear-holidays')?.addEventListener('click', () => { holidaysInput.value = ''; });
 
 let lastResult = null;
+let scheduleSeedCounter = 0;
+
+function nextRandomSeed() {
+  try {
+    if (window.crypto?.getRandomValues) {
+      const arr = new Uint32Array(1);
+      window.crypto.getRandomValues(arr);
+      return arr[0] >>> 0;
+    }
+  } catch {}
+  scheduleSeedCounter += 1;
+  const base = Date.now() & 0xffffffff;
+  const extra = Math.floor(Math.random() * 0xffffffff);
+  return (base ^ extra ^ scheduleSeedCounter) >>> 0;
+}
+
+function getWeeksCount() {
+  const value = Number(weeksInput.value || 4);
+  if (!Number.isFinite(value)) return 4;
+  return Math.max(1, Math.min(8, value));
+}
 
 function setRoleHardcapMode(mode) {
   roleHardcapMode = mode;
@@ -162,7 +183,7 @@ async function onGenerate() {
 
     try {
       const startDate = startInput.value;
-      const weeks = Math.max(1, Math.min(8, Number(weeksInput.value || 4)));
+      const weeks = getWeeksCount();
       const endDate = endInput.value || null;
       const employees = parseEmployees(employeesInput.value);
       const prev = getPreviousStatsFromUI();
@@ -177,10 +198,13 @@ async function onGenerate() {
       const vacations = parseVacationRanges(vacationsInput.value);
       const prior = getPriorDayDutyFromUI();
 
-      const runSchedule = (mode) => {
-        const args = { startDate, endDate, weeks, weekMode, employees, holidays, dutyUnavailableByName: Object.fromEntries(dutyUnavailable), dayoffWishByName: Object.fromEntries(dayoffWish), vacationDaysByName: Object.fromEntries(vacations), priorDayDuty: prior, optimization, weekdaySlots, weekendSlots: 2, timeBudgetMs: budgetMs, roleHardcapMode: mode, prevStats: prev };
+      const runSchedule = (mode, seed) => {
+        const randomSeed = Number.isFinite(seed) ? seed : nextRandomSeed();
+        const args = { startDate, endDate, weeks, weekMode, employees, holidays, dutyUnavailableByName: Object.fromEntries(dutyUnavailable), dayoffWishByName: Object.fromEntries(dayoffWish), vacationDaysByName: Object.fromEntries(vacations), priorDayDuty: prior, optimization, weekdaySlots, weekendSlots: 2, timeBudgetMs: budgetMs, roleHardcapMode: mode, prevStats: prev, randomSeed };
         return generateSchedule(args);
       };
+
+      const needsUnderfillFix = (result) => result.schedule.some((day) => (day.duties?.length || 0) < 2 || day.underfilled);
 
       const calculateScore = (result, prev) => {
         let score = 0;
@@ -224,6 +248,7 @@ async function onGenerate() {
       }
 
       let bestResult = runSchedule(roleHardcapMode);
+      let bestNeedsUnderfill = needsUnderfillFix(bestResult);
 
       if (roleHardcapMode === 'strict') {
         const getCompositeScore = (result, prev) => {
@@ -233,23 +258,46 @@ async function onGenerate() {
           return (hardExceeds * 1000) + (fairnessScore * 100) + softExceeds;
         };
 
+        const maxAttempts = 50;
         let bestCompositeScore = getCompositeScore(bestResult, prev);
+        let bestSoftExceeds = countSoftExceed(bestResult, 72);
 
-        for (let i = 1; i <= 15; i++) {
-          if (bestCompositeScore === 0) {
-            appendMessage(`최적 결과 발견 (시도 ${i - 1}회)`);
-            break;
+        if (bestSoftExceeds > 0 || bestNeedsUnderfill) {
+          let attemptsPerformed = 0;
+          for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+            setLoading(true, `결과 최적화 중… (재시도 ${attempt}/${maxAttempts})`);
+            await new Promise(resolve => setTimeout(resolve, 0));
+
+            const candidateResult = runSchedule(roleHardcapMode);
+            const candidateSoftExceeds = countSoftExceed(candidateResult, 72);
+            const candidateNeedsUnderfill = needsUnderfillFix(candidateResult);
+            const candidateCompositeScore = getCompositeScore(candidateResult, prev);
+
+            if (
+              candidateSoftExceeds < bestSoftExceeds ||
+              (candidateSoftExceeds === bestSoftExceeds && Number(candidateNeedsUnderfill) < Number(bestNeedsUnderfill)) ||
+              (
+                candidateSoftExceeds === bestSoftExceeds &&
+                Number(candidateNeedsUnderfill) === Number(bestNeedsUnderfill) &&
+                candidateCompositeScore < bestCompositeScore
+              )
+            ) {
+              bestResult = candidateResult;
+              bestSoftExceeds = candidateSoftExceeds;
+              bestNeedsUnderfill = candidateNeedsUnderfill;
+              bestCompositeScore = candidateCompositeScore;
+            }
+
+            attemptsPerformed = attempt;
+
+            if (bestSoftExceeds === 0 && !bestNeedsUnderfill) {
+              appendMessage(`72h 초과·빈 슬롯 없이 생성 성공 (재시도 ${attempt}회)`);
+              break;
+            }
           }
 
-          setLoading(true, `결과 최적화 중… (재시도 ${i}/15)`);
-          await new Promise(resolve => setTimeout(resolve, 0));
-
-          const candidateResult = runSchedule(roleHardcapMode);
-          const candidateCompositeScore = getCompositeScore(candidateResult, prev);
-
-          if (candidateCompositeScore < bestCompositeScore) {
-            bestResult = candidateResult;
-            bestCompositeScore = candidateCompositeScore;
+          if (bestSoftExceeds > 0 || bestNeedsUnderfill) {
+            appendMessage(`72h 미초과/빈 슬롯 해소 실패 (재시도 ${attemptsPerformed}/${maxAttempts}) — 최적 후보를 사용합니다.`);
           }
         }
       } else { // relaxed mode
@@ -271,8 +319,8 @@ async function onGenerate() {
         }
       }
 
-      const needsUnderfillFix = (result) => result.schedule.some((day) => (day.duties?.length || 0) < 2 || day.underfilled);
-      if (needsUnderfillFix(bestResult) && roleHardcapMode === 'strict') {
+      bestNeedsUnderfill = needsUnderfillFix(bestResult);
+      if (bestNeedsUnderfill && roleHardcapMode === 'strict') {
         appendMessage('최적 결과에 빈 슬롯 발생. 완화 모드로 재시도...');
         await new Promise(resolve => setTimeout(resolve, 0));
         
@@ -637,16 +685,10 @@ function getComputedIcsBase() {
 
 function dominantMonthKey() {
   try {
-    const s = startInput.value; if (!s) return '';
-    const start = new Date(s);
-    let end = null;
-    if (endInput.value) end = new Date(endInput.value);
-    else {
-      const weeks = Math.max(1, Math.min(8, Number(weeksInput.value || 4)));
-      end = addDays(start, weeks * 7 - 1);
-    }
+    const range = currentDateRange();
+    if (!range) return '';
     const counts = new Map();
-    for (let d = new Date(start); d <= end; d = addDays(d, 1)) {
+    for (let d = new Date(range.start); d <= range.end; d = addDays(d, 1)) {
       const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
       counts.set(key, (counts.get(key) || 0) + 1);
     }
@@ -937,7 +979,10 @@ function buildPreviousAdjustRows(result, prev) {
 }
 
 function computeCarryoverDeltas(entries) {
-  console.log('[computeCarryoverDeltas] entries:', JSON.parse(JSON.stringify(entries)));
+  const diagnostics = isDiagnosticsEnabled();
+  if (diagnostics) {
+    console.log('[computeCarryoverDeltas] entries:', JSON.parse(JSON.stringify(entries)));
+  }
   if (!entries.length) return { deltas: [], base: 0 };
   const counts = entries.map(e => e.count);
   let base = counts[0] || 0;
@@ -965,7 +1010,9 @@ function computeCarryoverDeltas(entries) {
       base = sorted.length % 2 === 0 ? sorted[mid - 1] : sorted[mid];
     }
   }
-  console.log(`[computeCarryoverDeltas] calculated base=${base}`);
+  if (diagnostics) {
+    console.log(`[computeCarryoverDeltas] calculated base=${base}`);
+  }
 
   const deltas = entries.map(e => ({
     name: e.name,
@@ -975,33 +1022,14 @@ function computeCarryoverDeltas(entries) {
   .filter(d => d.delta !== 0)
   .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta) || b.delta - a.delta);
 
-  console.log('[computeCarryoverDeltas] final deltas:', JSON.parse(JSON.stringify(deltas)));
+  if (diagnostics) {
+    console.log('[computeCarryoverDeltas] final deltas:', JSON.parse(JSON.stringify(deltas)));
+  }
 
   return { deltas, base };
 }
 
 // 중앙값 기준 signed(−/0/+): delta = count − median
-function computeMedianSignedDeltas(entries) {
-  if (!entries.length) return [];
-  const countsOnly = entries.map((e) => Number(e.count || 0)).sort((a,b)=>a-b);
-  const mid = Math.floor(countsOnly.length / 2);
-  const median = (countsOnly.length % 2 === 1)
-    ? countsOnly[mid]
-    : Math.floor((countsOnly[mid - 1] + countsOnly[mid]) / 2);
-  const out = [];
-  for (const e of entries) {
-    const cnt = Number(e.count || 0);
-    const delta = cnt - median; // 예: 3,4,5 -> −1,0,+1
-    if (delta !== 0) out.push({ id: e.id, name: e.name, delta });
-  }
-  out.sort((a,b) => {
-    const aa = Math.abs(a.delta), bb = Math.abs(b.delta);
-    if (aa !== bb) return bb - aa;
-    return (b.delta - a.delta);
-  });
-  return out;
-}
-
 function monthKeyFromResult(result) {
   try {
     const counts = new Map();
@@ -1023,16 +1051,6 @@ function endDateOf(result) {
   return fmtDate(end);
 }
 
-function groupBy(arr, keyFn) {
-  const map = new Map();
-  for (const item of arr) {
-    const k = keyFn(item);
-    if (!map.has(k)) map.set(k, []);
-    map.get(k).push(item);
-  }
-  return map;
-}
-
 function getTimeBudgetMsFromQuery() {
   try {
     const qs = new URLSearchParams(window.location.search);
@@ -1049,6 +1067,14 @@ function signed(n) {
 function appendMessage(msg) {
   if (!msg) return;
   messages.textContent = messages.textContent ? `${messages.textContent} | ${msg}` : msg;
+}
+
+function isDiagnosticsEnabled() {
+  try {
+    return !!document.getElementById('toggle-diagnostics')?.checked;
+  } catch {
+    return false;
+  }
 }
 
 function countSoftExceed(result, limit = 72) {
@@ -1073,54 +1099,6 @@ function countHardExceed(result, limit = 75) {
     }
     return cnt;
   } catch { return 0; }
-}
-
-function calculateScheduleDeviations(result, prev) {
-  let deviationCount = 0;
-  const { byungCount, eungCount } = computeRoleAndOffCounts(result);
-  const empById = new Map(result.employees.map((e) => [e.id, e]));
-
-  // 1. R1 & R2 deviation check
-  for (const klass of ['R1', 'R2']) {
-    const peopleInClass = result.stats.filter(s => (empById.get(s.id)?.klass || '기타') === klass);
-    if (!peopleInClass.length) continue;
-
-    for (const role of [{ key: 'byung', countMap: byungCount }, { key: 'eung', countMap: eungCount }]) {
-      const prevList = (prev.entriesByClassRole.get(klass)?.[role.key]) || [];
-      const prevByName = new Map(prevList.map((e) => [e.name, Number(e.delta) || 0]));
-      
-      const finalCounts = peopleInClass.map((p) => ({
-        id: p.id,
-        name: p.name,
-        count: (Number(role.countMap.get(p.id) || 0)) + (prevByName.get(p.name) || 0),
-      }));
-
-      const { deltas: finalDeltas } = computeCarryoverDeltas(finalCounts);
-      
-      for (const d of finalDeltas) {
-        if (Math.abs(d.delta) >= 1.99) { // Use 1.99 to avoid float issues
-          deviationCount++;
-        }
-      }
-    }
-  }
-
-  // 2. New R3 non-pediatric balancing check
-  const r3NonPediatric = result.employees.filter(p => p.klass === 'R3' && !p.pediatric);
-  if (r3NonPediatric.length === 2) {
-    const p1 = r3NonPediatric[0];
-    const p2 = r3NonPediatric[1];
-
-    const p1Byung = byungCount.get(p1.id) || 0;
-    const p2Byung = byungCount.get(p2.id) || 0;
-    deviationCount += Math.abs(p1Byung - p2Byung);
-
-    const p1Eung = eungCount.get(p1.id) || 0;
-    const p2Eung = eungCount.get(p2.id) || 0;
-    deviationCount += Math.abs(p1Eung - p2Eung);
-  }
-
-  return deviationCount;
 }
 
 function parseVacationRanges(text) {
@@ -1297,7 +1275,7 @@ function renderCarryoverStats(result, opts = {}) {
       tr.appendChild(labelTd);
 
       const valueTd = document.createElement('td');
-      const showDiagnostics = document.getElementById('toggle-diagnostics')?.checked;
+      const showDiagnostics = isDiagnosticsEnabled();
       const deltaStr = finalDeltas.length ? finalDeltas.map((d) => `${d.name} ${signed(d.delta)}`).join(' · ') : '-';
 
       if (showDiagnostics) {
@@ -1314,7 +1292,7 @@ function renderCarryoverStats(result, opts = {}) {
     wrap.appendChild(table);
   }
 
-  const showDiagnostics = document.getElementById('toggle-diagnostics')?.checked;
+  const showDiagnostics = isDiagnosticsEnabled();
   if (showDiagnostics) {
     const diag = document.createElement('pre');
     diag.style.background = '#111';
@@ -1372,138 +1350,7 @@ function computeRoleAndOffCounts(result) {
 // 보정 규칙:
 // - 두 수가 같고 하나만 다른 전형 케이스: outlier를 mode로 맞춤(±diff) — 1명만 보정
 // - 그 외 복잡한 케이스: 중앙값 기준 편차를 계산하고, 한 명에게 총합을 모아 전달(±sum) — 1명만 보정
-function computeCleanCarryover(entries) {
-  if (!entries.length) return [];
-  const counts = entries.map((e) => e.count);
-  const freq = new Map();
-  for (const c of counts) freq.set(c, (freq.get(c) || 0) + 1);
-  let mode = null, modeCnt = 0;
-  for (const [k, v] of freq) { if (v > modeCnt) { mode = k; modeCnt = v; } }
-  const outliers = entries.filter((e) => e.count !== mode);
-  if (modeCnt === entries.length) return []; // 모두 동일
-  if (modeCnt === entries.length - 1 && outliers.length === 1) {
-    const o = outliers[0];
-    const delta = mode - o.count; // 양수: 다음달 더, 음수: 다음달 덜
-    if (delta === 0) return [];
-    return [{ id: o.id, name: o.name, delta }];
-  }
-  // 복잡 케이스: 중앙값 기준으로 한 명에게 합산해서 전달
-  const sorted = counts.slice().sort((a, b) => a - b);
-  const median = sorted[Math.floor(sorted.length / 2)];
-  const deltas = entries.map((e) => ({ id: e.id, name: e.name, delta: median - e.count }));
-  const net = deltas.reduce((a, b) => a + b.delta, 0);
-  if (net === 0) {
-    // 한 명만 남기고 합산(가독성): 절대값이 가장 큰 사람에게 몰아주기
-    let maxIdx = 0; let maxAbs = Math.abs(deltas[0].delta);
-    for (let i = 1; i < deltas.length; i += 1) { const ab = Math.abs(deltas[i].delta); if (ab > maxAbs) { maxAbs = ab; maxIdx = i; } }
-    const keep = deltas[maxIdx];
-    const sum = deltas.reduce((a, b, i) => a + (i === maxIdx ? 0 : b.delta), 0);
-    return [{ id: keep.id, name: keep.name, delta: keep.delta - sum }];
-  } else {
-    // 합이 0이 아니면, 합을 반대 부호의 사람에게 몰아서 1명만 남김
-    // 반대 부호 후보가 없으면 절대값이 큰 사람 선택
-    let idx = deltas.findIndex((d) => (net > 0 ? d.delta < 0 : d.delta > 0));
-    if (idx < 0) {
-      let best = 0; let bestAbs = Math.abs(deltas[0].delta);
-      for (let i = 1; i < deltas.length; i += 1) { const ab = Math.abs(deltas[i].delta); if (ab > bestAbs) { bestAbs = ab; best = i; } }
-      idx = best;
-    }
-    const target = deltas[idx];
-    return [{ id: target.id, name: target.name, delta: target.delta - net }];
-  }
-}
-
 // 다자 균형: 총합 보존(sum deltas = 0), 가능한 한 값들을 floor(avg) 또는 ceil(avg)로 맞춤
-function computeFairMultiDeltas(entries, favor = 'low', preferSet = new Set()) {
-  if (!entries.length) return [];
-  const total = entries.reduce((a, e) => a + Number(e.count || 0), 0);
-  const n = entries.length;
-  const base = Math.floor(total / n);
-  const r = total - base * n; // r명은 base+1 목표, 나머지는 base
-  // favor='low': 낮은 값부터 base+1 부여(낮은 사람을 끌어올림)
-  // favor='high': 높은 값부터 base+1 부여(감소량 최소화)
-  const sorted = entries
-    .map((e, i) => ({ i, ...e }))
-    .sort((a, b) => {
-      if (favor === 'low') {
-        if (a.count !== b.count) return a.count - b.count;
-        const pa = preferSet.has(a.name) ? -1 : 0;
-        const pb = preferSet.has(b.name) ? -1 : 0;
-        if (pa !== pb) return pa - pb; // preferSet 우선(낮은 그룹에서 먼저 +1)
-        return 0;
-      }
-      // favor='high'
-      if (a.count !== b.count) return b.count - a.count;
-      const pa = preferSet.has(a.name) ? -1 : 0;
-      const pb = preferSet.has(b.name) ? -1 : 0;
-      if (pa !== pb) return pa - pb;
-      return 0;
-    });
-  const targets = new Array(n).fill(base);
-  for (let k = 0; k < r; k += 1) targets[sorted[k].i] = base + 1;
-  const deltas = entries.map((e, i) => ({ id: e.id, name: e.name, delta: targets[i] - Number(e.count || 0) }));
-  return deltas.filter((d) => d.delta !== 0);
-}
-
-// 역할 스왑 기반 보정치: by/eu 한 쌍을 동시에 맞춤 (개인 총합 유지)
-function computeRoleSwapDeltas(byEntries, euEntries) {
-  const n = byEntries.length;
-  if (n === 0 || euEntries.length !== n) return { byDeltas: [], euDeltas: [] };
-  // by의 총합을 보존하면서 공정하게 분배: 낮은 사람을 우선 끌어올림
-  const byDeltas = computeFairMultiDeltas(byEntries, 'low');
-  // map to per index for sign coupling
-  const idxByName = new Map(byEntries.map((e, i) => [e.name, i]));
-  const deltaByArr = new Array(n).fill(0);
-  for (const d of byDeltas) {
-    const i = idxByName.get(d.name);
-    if (i != null) deltaByArr[i] = d.delta;
-  }
-  const byOut = [];
-  const euOut = [];
-  for (let i = 0; i < n; i += 1) {
-    if (deltaByArr[i]) byOut.push({ name: byEntries[i].name, delta: deltaByArr[i] });
-    if (deltaByArr[i]) euOut.push({ name: euEntries[i].name, delta: -deltaByArr[i] });
-  }
-  return { byDeltas: byOut, euDeltas: euOut };
-}
-
-// R3 전용: 총 당직(병당+응당) 균형을 응당 보정으로 표현
-function computeR3EungCarryover(people, byungCount, eungCount) {
-  const arr = people.map((p) => ({
-    id: p.id,
-    name: p.name,
-    pediatric: !!p.pediatric,
-    total: Number(byungCount.get(p.id) || 0) + Number(eungCount.get(p.id) || 0),
-    eung: Number(eungCount.get(p.id) || 0),
-  }));
-  if (arr.length === 0) return null;
-  // 목표: 총 당직 수를 중앙값에 맞춤
-  const totals = arr.map((x) => x.total).sort((a,b)=>a-b);
-  const target = totals[Math.floor(totals.length/2)];
-  // 과다/과소자 파악
-  const over = arr.filter((x) => x.total > target);
-  const under = arr.filter((x) => x.total < target);
-  if (over.length === 0 && under.length === 0) return null;
-  // 선호: 비소아 인원 먼저 대상 지정
-  const pick = (list, wantUnder=false) => {
-    const pref = list.filter((x) => !x.pediatric);
-    if (pref.length) return wantUnder ? pref[0] : pref[0];
-    return list[0];
-  };
-  // 하나의 깨끗한 보정값으로 표현: 과소자에게 +k (응당), 또는 과다자에게 -k
-  if (under.length) {
-    const u = pick(under, true);
-    const need = target - u.total;
-    if (need !== 0) return { id: u.id, name: u.name, delta: need };
-  }
-  if (over.length) {
-    const o = pick(over, false);
-    const give = o.total - target;
-    if (give !== 0) return { id: o.id, name: o.name, delta: -give };
-  }
-  return null;
-}
-
 // 이전 보정 파서: 텍스트에서 (이름, 역할, 부호있는 정수)를 추출
 function getPreviousStatsFromUI() {
   const root = previousStatsUIRoot;
@@ -1607,30 +1454,30 @@ async function loadKRHolidays({ merge = true } = {}) {
 }
 
 function yearsInRange() {
-  const s = startInput.value;
-  const e = endInput.value;
-  let start = s ? new Date(s) : null;
-  let end = e ? new Date(e) : null;
-  if (!start) return new Set();
-  if (!end) {
-    const weeks = Math.max(1, Math.min(8, Number(weeksInput.value || 4)));
-    end = addDays(new Date(start), weeks * 7 - 1);
-  }
+  const range = currentDateRange();
+  if (!range) return new Set();
   const ys = new Set();
-  const y1 = start.getFullYear(); const y2 = end.getFullYear();
-  for (let y = Math.min(y1, y2); y <= Math.max(y1, y2); y += 1) ys.add(y);
+  const startYear = range.start.getFullYear();
+  const endYear = range.end.getFullYear();
+  for (let y = Math.min(startYear, endYear); y <= Math.max(startYear, endYear); y += 1) {
+    ys.add(y);
+  }
   return ys;
 }
 
 function currentDateRange() {
-  const s = startInput.value;
-  const e = endInput.value;
-  if (!s) return null;
-  const start = new Date(s);
+  const startValue = startInput.value;
+  if (!startValue) return null;
+  const start = new Date(startValue);
+  if (Number.isNaN(start.getTime())) return null;
+
+  const endValue = endInput.value;
   let end;
-  if (e) end = new Date(e); else {
-    const weeks = Math.max(1, Math.min(8, Number(weeksInput.value || 4)));
-    end = addDays(new Date(start), weeks * 7 - 1);
+  if (endValue) {
+    end = new Date(endValue);
+    if (Number.isNaN(end.getTime())) return null;
+  } else {
+    end = addDays(start, getWeeksCount() * 7 - 1);
   }
   return { start, end };
 }
@@ -1710,7 +1557,7 @@ function renderPersonalStats(result) {
     wrap.appendChild(table);
   }
 
-  const showDiagnostics = document.getElementById('toggle-diagnostics')?.checked;
+  const showDiagnostics = isDiagnosticsEnabled();
   if (showDiagnostics) {
     const diag = document.createElement('pre');
     diag.style.background = '#111';

@@ -10,7 +10,17 @@ import { addDays, isWorkday, weekKey, fmtDate, rangeDays, weekKeyByMode, allWeek
 
 // preference: 'any' | 'weekday' | 'weekend'
 // optimization: 'off' | 'fast' | 'medium' | 'strong'
-export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMode = 'calendar', employees, holidays = [], dutyUnavailableByName = {}, dayoffWishByName = {}, vacationDaysByName = {}, priorDayDuty = { byung: '', eung: '' }, optimization = 'medium', weekdaySlots = 1, weekendSlots = 2, timeBudgetMs = 2000, roleHardcapMode = 'strict', prevStats = null }) {
+export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMode = 'calendar', employees, holidays = [], dutyUnavailableByName = {}, dayoffWishByName = {}, vacationDaysByName = {}, priorDayDuty = { byung: '', eung: '' }, optimization = 'medium', weekdaySlots = 1, weekendSlots = 2, timeBudgetMs = 2000, roleHardcapMode = 'strict', prevStats = null, randomSeed = null }) {
+  const random = (() => {
+    if (Number.isFinite(randomSeed)) {
+      let seed = (randomSeed >>> 0) || 0x9e3779b9;
+      return () => {
+        seed = (seed * 1664525 + 1013904223) >>> 0;
+        return (seed >>> 0) / 0x100000000;
+      };
+    }
+    return Math.random;
+  })();
   if (!employees || employees.length < 2) {
     throw new Error('근무자는 2명 이상 필요합니다.');
   }
@@ -63,7 +73,7 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
     _byung: 0,
     _eung: 0,
     lastDutyIndex: -999,
-    offDayKeys: new Set(), // 24h 당직 다음날: 당직/정규 제외
+    offDayKeys: new Set(), // 연속 비근무일 차단(주말 24h 연속 근무 등)
     regularOffDayKeys: new Set(), // 평일 당직 다음날: 정규 제외
     dutyUnavailable: new Set(dutyUnavailableByName[(typeof emp === 'string' ? emp : emp.name)] || []),
     dayoffWish: new Set(dayoffWishByName[(typeof emp === 'string' ? emp : emp.name)] || []),
@@ -76,6 +86,8 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
     if (!membersByClass.has(key)) membersByClass.set(key, []);
     membersByClass.get(key).push(p);
   }
+
+  const priorDutyCooldownIds = new Set();
 
   function getRoleCount(person, slot) {
     return slot === 0 ? (person._byung || 0) : (person._eung || 0);
@@ -182,6 +194,7 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
   }
   // 전일 당직(시작일 전날) 사전 반영: 다음날(start)은 Day-off(주말/공휴일 전날이면 정규/당직 모두 제외)
   function applyPriorDayDutyOff() {
+    priorDutyCooldownIds.clear();
     try {
       const prev = addDays(start, -1);
       const prevIsWork = isWorkday(prev, holidaySet);
@@ -189,7 +202,10 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
       const names = new Set([priorDayDuty?.byung || '', priorDayDuty?.eung || ''].filter(Boolean));
       for (const p of people) {
         if (!names.has(p.name)) continue;
-        if (prevIsWork) p.regularOffDayKeys.add(startKey); else p.offDayKeys.add(startKey);
+        priorDutyCooldownIds.add(p.id);
+        if (prevIsWork) {
+          p.regularOffDayKeys.add(startKey);
+        }
       }
     } catch {}
   }
@@ -600,6 +616,7 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
     endDate: endDate ? fmtDate(addDays(start, totalDays - 1)) : null,
     schedule,
     config: { weekMode, weekdaySlots: Math.max(1, Math.min(2, weekdaySlots)), weekendSlots: Math.max(1, weekendSlots), roleHardcapMode: hardcapMode, priorDayDuty },
+    randomSeed,
     warnings: preAssignFailures.length ? (warnings.concat([`불가일 전일 당직 배치 실패: ${preAssignFailures.join(' / ')}`])) : warnings,
     stats: people.map((p, i) => ({
       id: p.id,
@@ -661,6 +678,12 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
     const afterOff = [];
     for (const p of pool) (p.offDayKeys.has(todayKey) ? stage.offday : afterOff).push(p);
     pool = afterOff;
+
+    if (index === 0 && priorDutyCooldownIds.size) {
+      const afterPrior = [];
+      for (const p of pool) (priorDutyCooldownIds.has(p.id) ? stage.offday : afterPrior).push(p);
+      pool = afterPrior;
+    }
 
     // 전일 당직자 제외 (연속 금지)
     if (prevDutyIds.size) {
@@ -747,7 +770,7 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
         for (let i = 0; i < a.score.length; i += 1) {
           if (a.score[i] !== b.score[i]) return a.score[i] - b.score[i];
         }
-        return 0;
+        return random() - 0.5;
       })
       .map((x) => x.p);
 
@@ -791,10 +814,11 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
     // 다음날 오프 처리
     const next = addDays(date, 1);
     const nKey = fmtDate(next);
-    if (!isTodayWorkday) {
-      person.offDayKeys.add(nKey); // 24h 다음날 전면 제외
-    } else {
+    const nextIsWorkday = isWorkday(next, holidaySet);
+    if (isTodayWorkday) {
       person.regularOffDayKeys.add(nKey); // 평일 당직 다음날 정규 제외
+    } else if (!nextIsWorkday) {
+      person.offDayKeys.add(nKey); // 연속 비근무일(주말→주말)만 전면 제외
     }
   }
 
@@ -846,33 +870,33 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
       if (Date.now() > endTs) break; // 시간 예산 초과 시 중단
       const proposal = current.map((arr) => arr.slice());
       // 무브 선택: 1-move 60%, 2-swap 40%
-      if (Math.random() < 0.6) {
+      if (random() < 0.6) {
         // 1-move: 한 날짜의 한 슬롯을 다른 날짜의 다른 사람으로 교체
-        let i = Math.floor(Math.random() * days.length);
+        let i = Math.floor(random() * days.length);
         const di = proposal[i] || [];
         if (di.length === 0) continue;
-        const si = Math.floor(Math.random() * di.length);
+        const si = Math.floor(random() * di.length);
 
         // 대체 후보 찾기: 가능한 날짜 j, 그 날의 인원들 중 중복 없이 하나 선택
-        let j = Math.floor(Math.random() * days.length);
+        let j = Math.floor(random() * days.length);
         let guard = 0;
-        while (guard++ < 10 && (j === i || (proposal[j] || []).length === 0)) j = Math.floor(Math.random() * days.length);
+        while (guard++ < 10 && (j === i || (proposal[j] || []).length === 0)) j = Math.floor(random() * days.length);
         const dj = proposal[j] || [];
-        const sj = Math.floor(Math.random() * dj.length);
+        const sj = Math.floor(random() * dj.length);
         const cand = dj[sj];
         // 같은 날 중복 방지
         if (proposal[i].includes(cand) && di[si] !== cand) continue;
         proposal[i][si] = cand;
       } else {
         // 2-swap: 서로 교환
-        let i = Math.floor(Math.random() * days.length);
-        let j = Math.floor(Math.random() * days.length);
+        let i = Math.floor(random() * days.length);
+        let j = Math.floor(random() * days.length);
         if (i === j) { j = (j + 1) % days.length; }
         const di = proposal[i] || [];
         const dj = proposal[j] || [];
         if (di.length === 0 || dj.length === 0) continue;
-        const si = Math.floor(Math.random() * di.length);
-        const sj = Math.floor(Math.random() * dj.length);
+        const si = Math.floor(random() * di.length);
+        const sj = Math.floor(random() * dj.length);
         if (di[si] === dj[sj]) continue;
         // 중복 방지
         if (proposal[i].includes(dj[sj]) || proposal[j].includes(di[si])) continue;
@@ -886,7 +910,7 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
         // 불만족 move는 버림
       } else {
         const dObj = evalRes.objective - curObj;
-        if (dObj <= 0 || Math.random() < Math.exp(-dObj / Math.max(1e-6, T))) {
+        if (dObj <= 0 || random() < Math.exp(-dObj / Math.max(1e-6, T))) {
           current = proposal;
           curObj = evalRes.objective;
           if (curObj < best.objective - 1e-9) {
@@ -1239,12 +1263,13 @@ export function generateSchedule({ startDate, endDate = null, weeks = 4, weekMod
         p.lastDutyIndex = i;
         if (s === 0) p._byung = (p._byung || 0) + 1;
         else if (s === 1) p._eung = (p._eung || 0) + 1;
-        if (!isWkday) {
-          const nKey = fmtDate(addDays(d, 1));
-          p.offDayKeys.add(nKey);
-        } else {
-          const nKey = fmtDate(addDays(d, 1));
+        const next = addDays(d, 1);
+        const nKey = fmtDate(next);
+        const nextIsWorkday = isWorkday(next, holidaySet);
+        if (isWkday) {
           p.regularOffDayKeys.add(nKey);
+        } else if (!nextIsWorkday) {
+          p.offDayKeys.add(nKey);
         }
       }
     }
