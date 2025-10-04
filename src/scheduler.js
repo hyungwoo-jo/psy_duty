@@ -400,8 +400,9 @@ function buildModel(ctx) {
     model.variables['min_r3_dayoffs']['r3_dayoff_diff'] = -1;
 
     for (const person of r3s) {
-      model.constraints[`r3_dayoff_link_min_${person.id}`] = { min: 0 };
-      model.constraints[`r3_dayoff_link_max_${person.id}`] = { max: 0 };
+      const carryoverOff = person.carryover.off || 0;
+      model.constraints[`r3_dayoff_link_min_${person.id}`] = { min: -carryoverOff };
+      model.constraints[`r3_dayoff_link_max_${person.id}`] = { max: -carryoverOff };
       model.variables['min_r3_dayoffs'][`r3_dayoff_link_min_${person.id}`] = -1;
       model.variables['max_r3_dayoffs'][`r3_dayoff_link_max_${person.id}`] = -1;
     }
