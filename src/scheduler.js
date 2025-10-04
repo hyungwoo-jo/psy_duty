@@ -5,14 +5,12 @@ const solver = typeof window !== 'undefined' ? await ensureSolver() : null;
 
 const DUTY_HOURS = { weekday: 13.5, weekend: 21 };
 const REGULAR_HOURS = 8;
-const WEEK_SOFT_MAX = 72;
-const WEEK_HARD_MAX = 75;
-const TOTAL_DUTY_SOFT_WEIGHT = 800;
-const WEEK_SOFT_WEIGHT = 1200;
-const UNDERFILL_WEIGHT = 100000;
-const CARRYOVER_WEIGHT = 5;
-const DAYOFF_CARRYOVER_WEIGHT = 25;
-const PREFERENCE_BONUS = -40;
+const WEEK_HARD_MAX = 72;
+const TOTAL_DUTY_SOFT_WEIGHT = 0;
+const WEEK_SOFT_WEIGHT = 0;
+const UNDERFILL_WEIGHT = 100000; // Keep this high to ensure slots are filled
+const CARRYOVER_WEIGHT = 0;
+const DAYOFF_CARRYOVER_WEIGHT = 0;
 const RANDOM_JITTER = 1e-3;
 
 export function generateSchedule(params) {
@@ -21,7 +19,7 @@ export function generateSchedule(params) {
   }
 
   const ctx = prepareContext(params);
-  const { model, assignmentVars, underfillVars, weekSlackVars, totalSlackVars } = buildModel(ctx);
+  const { model, assignmentVars, underfillVars } = buildModel(ctx);
 
   const startTs = performance?.now?.() ?? Date.now();
   const solution = solver.Solve(model);
@@ -35,8 +33,6 @@ export function generateSchedule(params) {
     ctx,
     assignmentVars,
     underfillVars,
-    weekSlackVars,
-    totalSlackVars,
     solution,
     elapsedMs: Math.round(endTs - startTs),
   });
@@ -105,14 +101,14 @@ function prepareContext(params) {
       dayoffWish: new Set(iterableOrEmpty(dayoffWishByName[name])),
       vacationDays: new Set(iterableOrEmpty(vacationDaysByName[name])),
       carryover: extractCarryover(prevStats, name),
-      totalCapHours: WEEK_SOFT_MAX * weekKeys.length,
+      totalCapHours: WEEK_HARD_MAX * weekKeys.length,
       isPriorDuty: priorDutyNames.has(name),
     };
   });
 
-  const preferByIndex = buildPreferByIndex({ days, employees: employeesWithMeta, holidaySet, dayKeys });
+  const dayoffWishes = buildDayoffWishes({ days, employees: employeesWithMeta, holidaySet, dayKeys });
 
-  const { capBy, capEu } = computeRoleCaps({
+  const { capBy, capEu, minCapBy, minCapEu } = computeRoleCaps({
     days,
     holidaySet,
     employees: employeesWithMeta,
@@ -129,9 +125,11 @@ function prepareContext(params) {
     weekKeys,
     employees: employeesWithMeta,
     priorDayDuty,
-    preferByIndex,
+    dayoffWishes,
     capBy,
     capEu,
+    minCapBy,
+    minCapEu,
     roleHardcapMode,
     weekdaySlots,
     weekendSlots,
@@ -164,22 +162,22 @@ function extractCarryover(prevStats, name) {
   return result;
 }
 
-function buildPreferByIndex({ days, employees, holidaySet, dayKeys }) {
+function buildDayoffWishes({ days, employees, holidaySet, dayKeys }) {
   const keyToIndex = new Map(dayKeys.map((key, idx) => [key, idx]));
-  const prefers = Array.from({ length: days.length }, () => new Set());
+  const wishes = [];
   for (const person of employees) {
     for (const key of person.dayoffWish) {
       const target = new Date(key);
       if (Number.isNaN(target.getTime())) continue;
       if (!isWorkday(target, holidaySet)) continue;
       const prev = addDays(target, -1);
-      const idx = keyToIndex.get(fmtDate(prev));
-      if (idx != null) {
-        prefers[idx].add(person.id);
+      const dayIndex = keyToIndex.get(fmtDate(prev));
+      if (dayIndex != null) {
+        wishes.push({ personId: person.id, dayIndex });
       }
     }
   }
-  return prefers;
+  return wishes;
 }
 
 function computeRoleCaps({ days, holidaySet, employees, roleHardcapMode, weekdaySlots, weekendSlots }) {
@@ -232,25 +230,34 @@ function computeRoleCaps({ days, holidaySet, employees, roleHardcapMode, weekday
 
   const capBy = new Map();
   const capEu = new Map();
+  const minCapBy = new Map();
+  const minCapEu = new Map();
+
   for (const p of employees) {
     const k = p.klass || '';
     const slots = classSlots.get(k) || { by: 0, eu: 0 };
     const sBy = sumEligByClass.get(k) || 0;
     const sEu = sumEligEuClass.get(k) || 0;
-    const tBy = sBy > 0 ? (slots.by * (eligBy.get(p.id) || 0) / sBy) : (slots.by / Math.max(1, employees.filter((q) => q.klass === k).length));
-    const tEu = sEu > 0 ? (slots.eu * (eligEu.get(p.id) || 0) / sEu) : (slots.eu / Math.max(1, employees.filter((q) => q.klass === k).length));
+    const numInClass = Math.max(1, employees.filter((q) => q.klass === k).length);
+
+    const tBy = sBy > 0 ? (slots.by * (eligBy.get(p.id) || 0) / sBy) : (slots.by / numInClass);
+    const tEu = sEu > 0 ? (slots.eu * (eligEu.get(p.id) || 0) / sEu) : (slots.eu / numInClass);
     const limit = roleDeviationLimit(k);
-    let capByVal = Number.POSITIVE_INFINITY;
-    let capEuVal = Number.POSITIVE_INFINITY;
+
     if (Number.isFinite(limit)) {
-      capByVal = Math.max(Math.ceil(tBy), Math.floor(tBy) + limit);
-      capEuVal = Math.max(Math.ceil(tEu), Math.floor(tEu) + limit);
+      capBy.set(p.id, Math.max(Math.ceil(tBy), Math.floor(tBy) + limit));
+      capEu.set(p.id, Math.max(Math.ceil(tEu), Math.floor(tEu) + limit));
+      minCapBy.set(p.id, Math.max(0, Math.ceil(tBy) - limit));
+      minCapEu.set(p.id, Math.max(0, Math.ceil(tEu) - limit));
+    } else {
+      capBy.set(p.id, Number.POSITIVE_INFINITY);
+      capEu.set(p.id, Number.POSITIVE_INFINITY);
+      minCapBy.set(p.id, 0);
+      minCapEu.set(p.id, 0);
     }
-    capBy.set(p.id, capByVal);
-    capEu.set(p.id, capEuVal);
   }
 
-  return { capBy, capEu };
+  return { capBy, capEu, minCapBy, minCapEu };
 }
 
 function buildModel(ctx) {
@@ -259,9 +266,11 @@ function buildModel(ctx) {
     dayKeys,
     holidaySet,
     employees,
-    preferByIndex,
     capBy,
     capEu,
+    minCapBy,
+    minCapEu,
+    dayoffWishes,
     weekKeys,
     start,
     weekMode,
@@ -275,6 +284,13 @@ function buildModel(ctx) {
     variables: {},
     binaries: {},
   };
+
+  // Day-off wish constraints
+  for (const wish of (dayoffWishes || [])) {
+    const constraintName = `wish_${wish.personId}_${wish.dayIndex}`;
+    model.constraints[constraintName] = { equal: 1 };
+    // Add variables to this constraint later in the main loop
+  }
 
   const assignmentVars = [];
   const underfillVars = [];
@@ -307,34 +323,83 @@ function buildModel(ctx) {
   for (const person of employees) {
     for (const wk of weekKeys) {
       model.constraints[weekHardConstraint(person.id, wk)] = { max: WEEK_HARD_MAX };
-      model.constraints[weekSoftConstraint(person.id, wk)] = { max: WEEK_SOFT_MAX };
-      const slackName = `weekSlack_${person.id}_${wk}`;
-      model.variables[slackName] = {
-        penalty: WEEK_SOFT_WEIGHT,
-        [weekSoftConstraint(person.id, wk)]: -1,
-      };
-      weekSlackVars.push({ name: slackName, personId: person.id, weekKey: wk });
     }
     const totalCap = person.totalCapHours;
     model.constraints[totalHardConstraint(person.id)] = { max: totalCap };
-    model.constraints[totalSoftConstraint(person.id)] = { max: totalCap };
-    const totalSlack = `totalSlack_${person.id}`;
-    model.variables[totalSlack] = {
-      penalty: TOTAL_DUTY_SOFT_WEIGHT,
-      [totalSoftConstraint(person.id)]: -1,
-    };
-    totalSlackVars.push({ name: totalSlack, personId: person.id });
+  }
+
+  // Day-off balance constraints (+/-3 for non-R3s)
+  const weekdayCount = days.filter(d => isWorkday(d, holidaySet)).length;
+  const totalDayoffs = weekdayCount * 2; // Assuming 2 slots on weekdays
+  const eligibleForDayoffCap = employees.filter(p => p.klass !== 'R3');
+  const avgDayoffs = totalDayoffs / Math.max(1, eligibleForDayoffCap.length);
+  const minDayoffs = Math.max(0, Math.floor(avgDayoffs) - 3);
+  const maxDayoffs = Math.ceil(avgDayoffs) + 3;
+
+  for (const person of eligibleForDayoffCap) {
+    model.constraints[`dayoff_cap_${person.id}`] = { min: minDayoffs, max: maxDayoffs };
+  }
+
+  // R3 day-off balancing (+/-1 within R3 group)
+  const r3s = employees.filter(p => p.klass === 'R3');
+  if (r3s.length > 1) {
+    model.variables['min_r3_dayoffs'] = { penalty: 0 };
+    model.variables['max_r3_dayoffs'] = { penalty: 0 };
+    model.constraints['r3_dayoff_diff'] = { max: 1 };
+    model.variables['max_r3_dayoffs']['r3_dayoff_diff'] = 1;
+    model.variables['min_r3_dayoffs']['r3_dayoff_diff'] = -1;
+
+    for (const person of r3s) {
+      model.constraints[`r3_dayoff_link_min_${person.id}`] = { min: 0 };
+      model.constraints[`r3_dayoff_link_max_${person.id}`] = { max: 0 };
+      model.variables['min_r3_dayoffs'][`r3_dayoff_link_min_${person.id}`] = -1;
+      model.variables['max_r3_dayoffs'][`r3_dayoff_link_max_${person.id}`] = -1;
+    }
+  }
+
+  // R3 non-pediatric pair balancing (+/-1)
+  const r3NonPediatricPair = employees.filter(p => p.klass === 'R3' && !p.pediatric);
+  if (r3NonPediatricPair.length === 2) {
+    const p1 = r3NonPediatricPair[0].id;
+    const p2 = r3NonPediatricPair[1].id;
+    model.constraints[`r3_balance_byung_1`] = { max: 1 };
+    model.constraints[`r3_balance_byung_2`] = { max: 1 };
+    model.constraints[`r3_balance_eung_1`] = { max: 1 };
+    model.constraints[`r3_balance_eung_2`] = { max: 1 };
+    model.constraints[`r3_balance_dayoff_1`] = { max: 1 };
+    model.constraints[`r3_balance_dayoff_2`] = { max: 1 };
   }
 
   // Role caps
   for (const person of employees) {
-    const capByVal = capBy.get(person.id);
-    if (Number.isFinite(capByVal)) {
-      model.constraints[roleCapConstraint(person.id, 'byung')] = { max: adjustCap(capByVal, person.carryover.byung) };
-    }
-    const capEuVal = capEu.get(person.id);
-    if (Number.isFinite(capEuVal)) {
-      model.constraints[roleCapConstraint(person.id, 'eung')] = { max: adjustCap(capEuVal, person.carryover.eung) };
+    if (person.klass === 'R3') {
+      // R3: Combined cap for byung+eung
+      const maxCombined = (capBy.get(person.id) || 0) + (capEu.get(person.id) || 0);
+      const minCombined = (minCapBy.get(person.id) || 0) + (minCapEu.get(person.id) || 0);
+      const carryoverCombined = (person.carryover.byung || 0) + (person.carryover.eung || 0);
+      const constraintName = `role_combined_${person.id}`;
+      model.constraints[constraintName] = {
+        min: minCombined - carryoverCombined,
+        max: maxCombined - carryoverCombined,
+      };
+    } else {
+      // Non-R3: Separate caps
+      const maxBy = capBy.get(person.id);
+      const minBy = minCapBy.get(person.id);
+      if (Number.isFinite(maxBy)) {
+        model.constraints[roleCapConstraint(person.id, 'byung')] = { 
+          min: minBy - (person.carryover.byung || 0),
+          max: maxBy - (person.carryover.byung || 0),
+        };
+      }
+      const maxEu = capEu.get(person.id);
+      const minEu = minCapEu.get(person.id);
+      if (Number.isFinite(maxEu)) {
+        model.constraints[roleCapConstraint(person.id, 'eung')] = { 
+          min: minEu - (person.carryover.eung || 0),
+          max: maxEu - (person.carryover.eung || 0),
+        };
+      }
     }
   }
 
@@ -350,29 +415,68 @@ function buildModel(ctx) {
     for (let slot = 0; slot < 2; slot += 1) {
       const neededClass = requiredClassFor(date, holidaySet, slot);
       const slotConstraint = slotConstraintName(dayIdx, slot);
-      const preferSet = preferByIndex[dayIdx] || new Set();
 
       for (const person of employees) {
         if (!isEligibleForSlot({ person, neededClass, date, dayKey, slot, isWeekday, holidaySet, dayIdx, priorCooldownIndex })) {
           continue;
         }
         const varName = `x_${dayIdx}_${slot}_${person.id}`;
-        const penalty = buildAssignmentPenalty({ person, slot, preferSet, random, dutyHours, isWeekday });
+        const penalty = buildAssignmentPenalty({ person, slot, random, dutyHours, isWeekday });
         model.variables[varName] = {
           penalty,
           [slotConstraint]: 1,
           [personDayConstraint(person.id, dayIdx)]: 1,
           [weekHardConstraint(person.id, weekKey)]: dutyHours,
-          [weekSoftConstraint(person.id, weekKey)]: dutyHours,
           [totalHardConstraint(person.id)]: dutyHours,
-          [totalSoftConstraint(person.id)]: dutyHours,
         };
-        if (slot === 0 && model.constraints[roleCapConstraint(person.id, 'byung')]) {
-          model.variables[varName][roleCapConstraint(person.id, 'byung')] = 1;
+
+        // Add to day-off cap constraint if applicable
+        if (isWeekday) {
+          if (person.klass !== 'R3') {
+            model.variables[varName][`dayoff_cap_${person.id}`] = 1;
+          } else if (r3s.length > 1) {
+            model.variables[varName][`r3_dayoff_link_min_${person.id}`] = 1;
+            model.variables[varName][`r3_dayoff_link_max_${person.id}`] = 1;
+          }
         }
-        if (slot === 1 && model.constraints[roleCapConstraint(person.id, 'eung')]) {
-          model.variables[varName][roleCapConstraint(person.id, 'eung')] = 1;
+
+        // Add to day-off wish constraint if it exists
+        const wishConstraintName = `wish_${person.id}_${dayIdx}`;
+        if (model.constraints[wishConstraintName]) {
+          model.variables[varName][wishConstraintName] = 1;
         }
+        if (person.klass === 'R3') {
+          model.variables[varName][`role_combined_${person.id}`] = 1;
+        } else {
+          if (slot === 0 && model.constraints[roleCapConstraint(person.id, 'byung')]) {
+            model.variables[varName][roleCapConstraint(person.id, 'byung')] = 1;
+          }
+          if (slot === 1 && model.constraints[roleCapConstraint(person.id, 'eung')]) {
+            model.variables[varName][roleCapConstraint(person.id, 'eung')] = 1;
+          }
+        }
+
+        // Add to R3 non-pediatric pair balancing constraints
+        if (r3NonPediatricPair.length === 2) {
+          const p1Id = r3NonPediatricPair[0].id;
+          const p2Id = r3NonPediatricPair[1].id;
+          if (person.id === p1Id || person.id === p2Id) {
+            const sign = person.id === p1Id ? 1 : -1;
+            if (slot === 0) {
+              model.variables[varName][`r3_balance_byung_1`] = sign;
+              model.variables[varName][`r3_balance_byung_2`] = -sign;
+            }
+            if (slot === 1) {
+              model.variables[varName][`r3_balance_eung_1`] = sign;
+              model.variables[varName][`r3_balance_eung_2`] = -sign;
+            }
+            if (isWeekday) {
+              model.variables[varName][`r3_balance_dayoff_1`] = sign;
+              model.variables[varName][`r3_balance_dayoff_2`] = -sign;
+            }
+          }
+        }
+
         if (dayIdx > 0) {
           model.variables[varName][personConsecutiveConstraint(person.id, dayIdx - 1)] = 1;
         }
@@ -385,23 +489,15 @@ function buildModel(ctx) {
     }
   }
 
-  return { model, assignmentVars, underfillVars, weekSlackVars, totalSlackVars };
+  return { model, assignmentVars, underfillVars };
 }
 
-function adjustCap(cap, carryover) {
-  if (!Number.isFinite(cap)) return cap;
-  if (!carryover) return cap;
-  if (carryover > 0) return Math.max(0, cap - carryover);
-  if (carryover < 0) return cap + Math.abs(carryover);
-  return cap;
-}
 
-function buildAssignmentPenalty({ person, slot, preferSet, random, dutyHours, isWeekday }) {
+function buildAssignmentPenalty({ person, slot, random, dutyHours, isWeekday }) {
   let penalty = 0;
   if (slot === 0 && person.carryover.byung) penalty += person.carryover.byung * CARRYOVER_WEIGHT;
   if (slot === 1 && person.carryover.eung) penalty += person.carryover.eung * CARRYOVER_WEIGHT;
   if (isWeekday && person.carryover.off) penalty += person.carryover.off * DAYOFF_CARRYOVER_WEIGHT;
-  if (preferSet.has(person.id)) penalty += PREFERENCE_BONUS;
   penalty += random() * RANDOM_JITTER;
   penalty += dutyHours * 0.01;
   return penalty;
@@ -464,7 +560,7 @@ function roleCapConstraint(personId, role) {
   return `role_${role}_${personId}`;
 }
 
-function buildResultFromSolution({ ctx, assignmentVars, underfillVars, weekSlackVars, totalSlackVars, solution, elapsedMs }) {
+function buildResultFromSolution({ ctx, assignmentVars, underfillVars, solution, elapsedMs }) {
   const { days, holidaySet, start, weekMode, employees, priorDayDuty } = ctx;
 
   const schedule = days.map((date) => ({
@@ -503,10 +599,10 @@ function buildResultFromSolution({ ctx, assignmentVars, underfillVars, weekSlack
 
   const peopleState = rebuildLedger({ ctx, schedule: processedSchedule });
 
-  const warningsBase = buildWarnings({ people: peopleState, weekSlackVars, totalSlackVars, solution });
-  const warnings = hasUnderfill
-    ? [...new Set([...warningsBase, '빈 슬롯이 남아 있습니다. 제약 조건을 확인해주세요.'])]
-    : warningsBase;
+  const warnings = buildWarnings({ people: peopleState });
+  if (hasUnderfill) {
+    warnings.push('빈 슬롯이 남아 있습니다. 제약 조건을 확인해주세요.');
+  }
 
   const totalDutyHours = peopleState.reduce((sum, p) => sum + (p._dutyHoursAccum || 0), 0);
   const avgDutyHours = totalDutyHours / Math.max(1, peopleState.length);
@@ -645,27 +741,11 @@ function applyPriorOffDays({ people, start, holidaySet, priorDayDuty }) {
   }
 }
 
-function buildWarnings({ people, weekSlackVars, totalSlackVars, solution }) {
+function buildWarnings({ people }) {
   const warnings = [];
   for (const p of people) {
-    collectWeeklyWarnings(p, warnings, WEEK_SOFT_MAX);
+    collectWeeklyWarnings(p, warnings, WEEK_HARD_MAX);
     collectTotalWarning(p, warnings, p.totalCapHours);
-  }
-  for (const slack of weekSlackVars) {
-    if ((solution[slack.name] || 0) > 1e-6) {
-      const person = people.find((p) => p.id === slack.personId);
-      if (person) {
-        warnings.push(`${person.name}의 ${slack.weekKey} 주 근무시간이 72h를 초과했습니다.`);
-      }
-    }
-  }
-  for (const slack of totalSlackVars) {
-    if ((solution[slack.name] || 0) > 1e-6) {
-      const person = people.find((p) => p.id === slack.personId);
-      if (person) {
-        warnings.push(`${person.name}의 총 근무시간이 월간 목표를 초과했습니다.`);
-      }
-    }
   }
   return [...new Set(warnings)];
 }
