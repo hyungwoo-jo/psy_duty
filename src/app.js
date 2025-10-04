@@ -37,9 +37,9 @@ exportXlsxBtn?.addEventListener('click', onExportXlsx);
 exportIcsBtn?.addEventListener('click', onExportIcs);
 // 직원 목록 변경 시 보정 UI 갱신
 employeesInput.addEventListener('input', debounce(renderPreviousStatsUI, 250));
-window.addEventListener('DOMContentLoaded', renderPreviousStatsUI);
-window.addEventListener('DOMContentLoaded', updateHardcapToggleLabel);
-window.addEventListener('DOMContentLoaded', () => {
+runOnReady(renderPreviousStatsUI);
+runOnReady(updateHardcapToggleLabel);
+runOnReady(() => {
   // GitHub Pages 경로 자동 추정(비어있을 때만)
   try {
     if (icsVersionInput && !icsVersionInput.value) icsVersionInput.value = 'v1';
@@ -93,6 +93,14 @@ function updateHardcapToggleLabel() {
   hardcapToggle.dataset.mode = roleHardcapMode;
   hardcapToggle.textContent = relaxed ? '완화 모드 (±2 허용)' : '기본 (±1)';
   hardcapToggle.setAttribute('aria-pressed', relaxed ? 'true' : 'false');
+}
+
+function runOnReady(fn) {
+  if (document.readyState === 'loading') {
+    window.addEventListener('DOMContentLoaded', fn, { once: true });
+  } else {
+    fn();
+  }
 }
 
 function setDefaultStartMonday() {
