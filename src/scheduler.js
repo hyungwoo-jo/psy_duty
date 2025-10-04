@@ -101,10 +101,43 @@ function prepareContext(params) {
       dayoffWish: new Set(iterableOrEmpty(dayoffWishByName[name])),
       vacationDays: new Set(iterableOrEmpty(vacationDaysByName[name])),
       carryover: extractCarryover(prevStats, name),
-      totalCapHours: WEEK_HARD_MAX * weekKeys.length,
       isPriorDuty: priorDutyNames.has(name),
     };
   });
+
+  const vacationKlasses = new Set();
+  for (const p of employeesWithMeta) {
+    if (p.vacationDays.size > 0) {
+      vacationKlasses.add(p.klass);
+    }
+  }
+
+  const weekdaysInWeek = new Map();
+  const vacationWeekdays = new Map(); // personId -> weekKey -> count
+
+  for (const wk of weekKeys) {
+    weekdaysInWeek.set(wk, 0);
+  }
+  for (const p of employeesWithMeta) {
+    vacationWeekdays.set(p.id, new Map());
+    for (const wk of weekKeys) {
+      vacationWeekdays.get(p.id).set(wk, 0);
+    }
+  }
+
+  for (const d of days) {
+    const wk = weekKeyByMode(d, start, weekMode);
+    if (isWorkday(d, holidaySet)) {
+      weekdaysInWeek.set(wk, (weekdaysInWeek.get(wk) || 0) + 1);
+      const dayKey = fmtDate(d);
+      for (const p of employeesWithMeta) {
+        if (p.vacationDays.has(dayKey)) {
+          const pmap = vacationWeekdays.get(p.id);
+          pmap.set(wk, (pmap.get(wk) || 0) + 1);
+        }
+      }
+    }
+  }
 
   const dayoffWishes = buildDayoffWishes({ days, employees: employeesWithMeta, holidaySet, dayKeys });
 
@@ -139,6 +172,9 @@ function prepareContext(params) {
     random,
     weeks: weeksCount,
     totalDays,
+    vacationKlasses,
+    weekdaysInWeek,
+    vacationWeekdays,
   };
 }
 
@@ -275,6 +311,9 @@ function buildModel(ctx) {
     start,
     weekMode,
     random,
+    vacationKlasses,
+    weekdaysInWeek,
+    vacationWeekdays,
   } = ctx;
 
   const model = {
@@ -285,17 +324,10 @@ function buildModel(ctx) {
     binaries: {},
   };
 
-  // Day-off wish constraints
-  for (const wish of (dayoffWishes || [])) {
-    const constraintName = `wish_${wish.personId}_${wish.dayIndex}`;
-    model.constraints[constraintName] = { equal: 1 };
-    // Add variables to this constraint later in the main loop
-  }
-
   const assignmentVars = [];
   const underfillVars = [];
-  const weekSlackVars = [];
-  const totalSlackVars = [];
+
+  // Day-off wish constraints
 
   // Slot constraints and underfill variables
   for (let i = 0; i < days.length; i += 1) {
@@ -319,13 +351,17 @@ function buildModel(ctx) {
     }
   }
 
-  // Weekly and total hour constraints
+  // Total weekly hour constraints (duty + regular)
   for (const person of employees) {
     for (const wk of weekKeys) {
-      model.constraints[weekHardConstraint(person.id, wk)] = { max: WEEK_HARD_MAX };
+      const cap = vacationKlasses.has(person.klass) ? 80 : 72;
+      const numWeekdays = weekdaysInWeek.get(wk) || 0;
+      const numVacationDays = vacationWeekdays.get(person.id)?.get(wk) || 0;
+      const effectiveCap = cap - (numWeekdays * REGULAR_HOURS) + (numVacationDays * REGULAR_HOURS);
+
+      const constraintName = `total_week_hours_${person.id}_${wk}`;
+      model.constraints[constraintName] = { max: effectiveCap };
     }
-    const totalCap = person.totalCapHours;
-    model.constraints[totalHardConstraint(person.id)] = { max: totalCap };
   }
 
   // Day-off balance constraints (+/-3 for non-R3s)
@@ -426,9 +462,10 @@ function buildModel(ctx) {
           penalty,
           [slotConstraint]: 1,
           [personDayConstraint(person.id, dayIdx)]: 1,
-          [weekHardConstraint(person.id, weekKey)]: dutyHours,
-          [totalHardConstraint(person.id)]: dutyHours,
         };
+        // Add to total week hours constraint
+        const coefficient = isWeekday ? (DUTY_HOURS.weekday - REGULAR_HOURS) : DUTY_HOURS.weekend;
+        model.variables[varName][`total_week_hours_${person.id}_${weekKey}`] = coefficient;
 
         // Add to day-off cap constraint if applicable
         if (isWeekday) {
