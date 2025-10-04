@@ -213,6 +213,7 @@ function buildDayoffWishes({ days, employees, holidaySet, dayKeys }) {
       const prev = addDays(target, -1);
       const dayIndex = keyToIndex.get(fmtDate(prev));
       if (dayIndex != null) {
+        // User wants to force a duty on the day before the wished Day-off
         wishes.push({ personId: person.id, dayIndex });
       }
     }
@@ -333,7 +334,11 @@ function buildModel(ctx) {
   const assignmentVars = [];
   const underfillVars = [];
 
-  // Day-off wish constraints
+  // Day-off wish constraints (force duty on the day before wished Day-off)
+  for (const wish of dayoffWishes) {
+    const constraintName = `wish_${wish.personId}_${wish.dayIndex}`;
+    model.constraints[constraintName] = { equal: 1 }; // Force duty
+  }
 
   // Slot constraints and underfill variables
   for (let i = 0; i < days.length; i += 1) {
