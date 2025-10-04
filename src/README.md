@@ -1,5 +1,7 @@
 # `scheduler.js` ILP 모델 아키텍처
 
+스케줄링 시스템의 전반적인 동작 방식, 주요 규칙, 제약 조건 및 수학적 표현에 대한 비기술적인 설명은 [`logic.md`](./logic.md) 파일을 참조하십시오.
+
 이 문서는 `scheduler.js`에서 사용되는 정수 선형 계획법(ILP) 모델의 제약 조건과 코드 구조를 설명합니다.
 
 ## 개요
@@ -25,6 +27,8 @@ A person can only be assigned to a duty slot if all the following conditions are
 
 ### Balancing and Fairness Constraints
 
+(자세한 설명 및 수학적 표현은 [`logic.md`](./logic.md) 파일을 참조하십시오.)
+
 1.  **Weekly Hours Cap**: A hard cap on the total weekly hours (regular work + duty hours).
     *   The base cap is 72 hours per week.
     *   This increases to 80 hours for all residents in a specific year (`klass`) if at least one resident of that year is on vacation.
@@ -41,6 +45,7 @@ A person can only be assigned to a duty slot if all the following conditions are
     *   R3 residents have a combined cap for `byung` and `eung` duties.
 
 4.  **R3-Specific Balancing**:
+    (자세한 설명 및 수학적 표현은 [`logic.md`](./logic.md) 파일을 참조하십시오.)
     *   **Day-off Balancing**: The difference in the total number of day-offs between R3 residents is constrained to be at most 1.
     *   **Pair Balancing**: If there are exactly two R3 residents not in pediatrics, their `byung` duty counts, `eung` duty counts, and day-off counts are individually balanced to have a maximum difference of 1.
 
