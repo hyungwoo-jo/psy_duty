@@ -373,7 +373,11 @@ function buildModel(ctx) {
   const maxDayoffs = Math.ceil(avgDayoffs) + 3;
 
   for (const person of eligibleForDayoffCap) {
-    model.constraints[`dayoff_cap_${person.id}`] = { min: minDayoffs, max: maxDayoffs };
+    const carryover = person.carryover.off || 0;
+    model.constraints[`dayoff_cap_${person.id}`] = {
+      min: minDayoffs - carryover,
+      max: maxDayoffs - carryover,
+    };
   }
 
   // R3 day-off balancing (+/-1 within R3 group)

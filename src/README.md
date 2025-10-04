@@ -8,32 +8,42 @@
 
 유일한 예외는 모든 슬롯을 반드시 채우도록 하는 제약으로, 이는 매우 높은 페널티를 부여하여 사실상 하드 제약 조건처럼 작동합니다.
 
-## 하드 제약 조건
+## Constraints
 
-모델은 다음의 절대적인 규칙들을 모두 만족해야 합니다.
+The model uses a set of hard constraints to define a valid schedule. The solver then finds a solution that satisfies all these constraints.
 
-1.  **슬롯 충족**: 모든 당직 슬롯은 반드시 한 명의 근무자로 채워져야 합니다.
+### Eligibility Constraints
 
-2.  **연속 근무 금지**: 한 사람이 연속된 날짜에 당직 근무를 할 수 없습니다.
+A person can only be assigned to a duty slot if all the following conditions are met:
 
-3.  **주간 근무 시간 상한**: 모든 근무자의 주당 근무 시간은 72시간을 초과할 수 없습니다.
+1.  **Correct Class (`klass`)**: The person's resident year (R1-R4) must match the requirement for that specific slot.
+2.  **Not on Vacation**: The person must not be on vacation on that day.
+3.  **Not Unavailable**: The person must not be marked as unavailable for duty on that day.
+4.  **No Day-off Wish**: The person must not have a day-off wish for that day.
+5.  **No Consecutive Duties**: The person must not have had a duty on the previous day.
+6.  **R3 Pediatric Rule**: R3 residents in pediatrics are not assigned duties on Wednesdays.
 
-4.  **역할/연차 배정**: 각 당직 슬롯(날짜, 역할)에는 사전에 정의된 특정 연차의 레지던트만 배정될 수 있습니다.
+### Balancing and Fairness Constraints
 
-5.  **당직 횟수 균형 (±1)**:
-    *   **기본 규칙**: 3년차(R3)가 아닌 레지던트는 역할(병당/응당)별로 개인의 총 당직 횟수가 연차 내 평균에서 ±1 이내여야 합니다.
-    *   **지난달 근무 반영 (Carryover)**: 이 `±1` 캡은 지난달의 근무 횟수 통계(carryover)를 반영하여 조정됩니다. 예를 들어, 지난달에 평균보다 근무를 1회 덜 했다면, 이번 달의 최대 근무 가능 횟수가 1회 늘어나는 방식으로 장기적인 균형을 맞춥니다. (`새로운 min/max = 기존 min/max - carryover`)
-    *   **3년차(R3) 합산 캡**: 3년차 레지던트의 경우, '병당'과 '응당'을 따로 계산하지 않고, 두 역할의 **합산된 총 당직 횟수**가 `±1` 캡 규칙을 따릅니다.
+1.  **Weekly Hours Cap**: A hard cap on the total weekly hours (regular work + duty hours).
+    *   The base cap is 72 hours per week.
+    *   This increases to 80 hours for all residents in a specific year (`klass`) if at least one resident of that year is on vacation.
+    *   The effective cap for a person in a given week is dynamically calculated based on the number of workdays and their personal vacation days in that week.
 
-6.  **휴무(Day-off) 희망일 보장**: 근무자가 특정 날짜 `D`에 Day-off를 희망하면, 모델은 반드시 그 전날인 `D-1`에 해당 근무자에게 당직을 배정합니다.
+2.  **Day-off Cap (for non-R3 residents)**:
+    *   The number of day-offs (a day after a weekday duty) is balanced across all non-R3 residents.
+    *   The allowed number of day-offs for each person is `average ± 3`.
+    *   This cap is adjusted by the person's day-off carryover value from the previous month to ensure fairness over time.
 
-7.  **Day-off 횟수 균형 (±3)**: 3년차를 제외한 모든 근무자의 총 Day-off 횟수는 소속 그룹 내 평균에서 `±3` 이내여야 합니다.
+3.  **Role-Specific Duty Caps**: 
+    *   The number of duties for each role (`byung`, `eung`) is balanced for each person based on their eligibility and resident year.
+    *   This cap is also adjusted by the person's role-specific carryover from the previous month.
+    *   R3 residents have a combined cap for `byung` and `eung` duties.
 
-8.  **3년차(R3) 그룹 내 특별 균형 규칙**:
-    *   **Day-off 횟수 (±1)**: 3년차 그룹 내에서는 서로 간의 Day-off 횟수 차이가 1회를 초과할 수 없습니다.
-    *   **소아턴 제외 2인 균형 (±1)**: 만약 소아턴이 아닌 3년차가 정확히 2명일 경우, 이 두 사람 간의 '병당', '응당', 'Day-off' 횟수는 각각 서로 1회 이상 차이 나지 않아야 합니다.
+4.  **R3-Specific Balancing**:
+    *   **Day-off Balancing**: The difference in the total number of day-offs between R3 residents is constrained to be at most 1.
+    *   **Pair Balancing**: If there are exactly two R3 residents not in pediatrics, their `byung` duty counts, `eung` duty counts, and day-off counts are individually balanced to have a maximum difference of 1.
 
-9.  **근무 불가일**: `dutyUnavailable` 또는 `vacationDays`로 지정된 날짜에는 당직이 배정되지 않습니다.
 
 ## 코드 구조
 
