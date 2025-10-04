@@ -256,6 +256,7 @@ async function onGenerate() {
       };
 
       let bestResult;
+      let isR3CapSuccessful = true;
       try {
         appendMessage('R3 주간 1회 당직 제약 적용하여 생성 시도...');
         bestResult = runSchedule(roleHardcapMode, undefined, true);
@@ -263,6 +264,7 @@ async function onGenerate() {
       } catch (e) {
         console.warn('Scheduling failed with R3 weekly cap, retrying without it.', e);
         appendMessage('R3 주간 1회 당직 제약으로 해를 찾지 못했습니다. 해당 제약을 비활성화하고 다시 시도합니다.');
+        isR3CapSuccessful = false;
         bestResult = runSchedule(roleHardcapMode, undefined, false);
       }
       let bestNeedsUnderfill = needsUnderfillFix(bestResult);
@@ -285,7 +287,7 @@ async function onGenerate() {
             setLoading(true, `결과 최적화 중… (재시도 ${attempt}/${maxAttempts})`);
             await new Promise(resolve => setTimeout(resolve, 0));
 
-            const candidateResult = runSchedule(roleHardcapMode);
+            const candidateResult = runSchedule(roleHardcapMode, undefined, isR3CapSuccessful);
             const candidateSoftExceeds = countSoftExceed(candidateResult, 72);
             const candidateNeedsUnderfill = needsUnderfillFix(candidateResult);
             const candidateCompositeScore = getCompositeScore(candidateResult, prev);
@@ -324,7 +326,7 @@ async function onGenerate() {
             setLoading(true, `결과 최적화 중… (재시도 ${i}/15)`);
             await new Promise(resolve => setTimeout(resolve, 0));
   
-            const candidateResult = runSchedule(roleHardcapMode);
+            const candidateResult = runSchedule(roleHardcapMode, undefined, isR3CapSuccessful);
             const candidateScore = calculateScore(candidateResult, prev);
   
             if (candidateScore < bestScore) {

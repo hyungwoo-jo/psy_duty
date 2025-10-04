@@ -385,15 +385,6 @@ function buildModel(ctx) {
 
   // R3 day-off balancing (+/-1 within R3 group)
   const r3s = employees.filter(p => p.klass === 'R3');
-
-  // R3 weekly duty balancing (max 1 per week, if enabled)
-  if (enforceR3WeeklyCap && r3s.length > 0) {
-    for (const person of r3s) {
-      for (const wk of weekKeys) {
-        model.constraints[`r3_weekly_duty_cap_${person.id}_${wk}`] = { max: 1 };
-      }
-    }
-  }
   if (r3s.length > 1) {
     model.variables['min_r3_dayoffs'] = { penalty: 0 };
     model.variables['max_r3_dayoffs'] = { penalty: 0 };
@@ -420,6 +411,17 @@ function buildModel(ctx) {
     model.constraints[`r3_balance_eung_2`] = { max: 1 };
     model.constraints[`r3_balance_dayoff_1`] = { max: 1 };
     model.constraints[`r3_balance_dayoff_2`] = { max: 1 };
+  }
+
+  // R3 주 1회 당직 제약
+  if (enforceR3WeeklyCap) {
+    const r3s = employees.filter(p => p.klass === 'R3');
+    for (const person of r3s) {
+      for (const wk of weekKeys) {
+        const constraintName = `r3_weekly_cap_${person.id}_${wk}`;
+        model.constraints[constraintName] = { max: 1 };
+      }
+    }
   }
 
   // Role caps
@@ -483,10 +485,16 @@ function buildModel(ctx) {
         const coefficient = isWeekday ? (DUTY_HOURS.weekday - REGULAR_HOURS) : DUTY_HOURS.weekend;
         model.variables[varName][`total_week_hours_${person.id}_${weekKey}`] = coefficient;
 
-        const nextDayIsWorkday = (dayIdx < days.length - 1) ? isWorkday(days[dayIdx + 1], holidaySet) : false;
+        // R3 주 1회 당직 제약 변수 추가
+        if (enforceR3WeeklyCap && person.klass === 'R3') {
+          const constraintName = `r3_weekly_cap_${person.id}_${weekKey}`;
+          if (model.constraints[constraintName]) {
+            model.variables[varName][constraintName] = 1;
+          }
+        }
 
         // Add to day-off cap constraint if applicable
-        if (nextDayIsWorkday) {
+        if (isWeekday) {
           if (person.klass !== 'R3') {
             model.variables[varName][`dayoff_cap_${person.id}`] = 1;
           } else if (r3s.length > 1) {
@@ -502,9 +510,6 @@ function buildModel(ctx) {
         }
         if (person.klass === 'R3') {
           model.variables[varName][`role_combined_${person.id}`] = 1;
-          if (enforceR3WeeklyCap && r3s.length > 0) {
-            model.variables[varName][`r3_weekly_duty_cap_${person.id}_${weekKey}`] = 1;
-          }
         } else {
           if (slot === 0 && model.constraints[roleCapConstraint(person.id, 'byung')]) {
             model.variables[varName][roleCapConstraint(person.id, 'byung')] = 1;
