@@ -185,7 +185,7 @@ async function onGenerate() {
   try {
     setLoading(true, '당직표 생성 중… 잠시만 기다려주세요');
     disableActions(true);
-    messages.textContent = '';
+    messages.innerHTML = '';
     
     await new Promise(resolve => setTimeout(resolve, 30));
 
@@ -206,9 +206,9 @@ async function onGenerate() {
       const vacations = parseVacationRanges(vacationsInput.value);
       const prior = getPriorDayDutyFromUI();
 
-      const runSchedule = (mode, seed, r3Cap = false, r1Cap = false) => {
+      const runSchedule = (mode, seed, r3Cap = false, r1Cap = false, hourCap = 'strict') => {
         const randomSeed = Number.isFinite(seed) ? seed : nextRandomSeed();
-        const args = { startDate, endDate, weeks, weekMode, employees, holidays, dutyUnavailableByName: Object.fromEntries(dutyUnavailable), dayoffWishByName: Object.fromEntries(dayoffWish), vacationDaysByName: Object.fromEntries(vacations), priorDayDuty: prior, optimization, weekdaySlots, weekendSlots: 2, timeBudgetMs: budgetMs, roleHardcapMode: mode, prevStats: prev, randomSeed, enforceR3WeeklyCap: r3Cap, enforceR1WeeklyCap: r1Cap };
+        const args = { startDate, endDate, weeks, weekMode, employees, holidays, dutyUnavailableByName: Object.fromEntries(dutyUnavailable), dayoffWishByName: Object.fromEntries(dayoffWish), vacationDaysByName: Object.fromEntries(vacations), priorDayDuty: prior, optimization, weekdaySlots, weekendSlots: 2, timeBudgetMs: budgetMs, roleHardcapMode: mode, prevStats: prev, randomSeed, enforceR3WeeklyCap: r3Cap, enforceR1WeeklyCap: r1Cap, weeklyHourCapMode: hourCap };
         return generateSchedule(args);
       };
 
@@ -287,113 +287,38 @@ async function onGenerate() {
           }
       }
 
-      let bestResult;
-      let r1CapEnforced = true;
-      let r3CapEnforced = true;
+      let bestResult = null;
+      const initialR1Cap = !anyR1HasVacation;
+      const initialR3Cap = !anyR3HasVacation;
 
+      // --- Constraint Dropping Architecture ---
+
+      // Attempt 1: All constraints are applied
       try {
-          appendMessage('R1/R3 주간 당직 제약 적용하여 생성 시도...');
-          const initialR1Cap = !anyR1HasVacation;
-          const initialR3Cap = !anyR3HasVacation;
-
-          bestResult = runSchedule(roleHardcapMode, undefined, initialR3Cap, initialR1Cap);
-          appendMessage('R1/R3 주간 당직 제약 적용 성공.');
-
-          r1CapEnforced = initialR1Cap;
-          r3CapEnforced = initialR3Cap;
-
+        appendMessage('1단계 시도: 모든 규칙을 적용하여 생성합니다...');
+        bestResult = runSchedule(roleHardcapMode, undefined, initialR3Cap, initialR1Cap, 'strict');
+        appendMessage('성공: 모든 규칙을 만족하는 스케줄을 찾았습니다.');
       } catch (e) {
-          console.warn('Scheduling failed with R1/R3 weekly caps, retrying without them.', e);
-          appendMessage('R1/R3 주간 당직 제약으로 해를 찾지 못했습니다. 해당 제약을 비활성화하고 다시 시도합니다.');
-
-          r1CapEnforced = false;
-          r3CapEnforced = false;
-          bestResult = runSchedule(roleHardcapMode, undefined, false, false);
-      }
-      let bestNeedsUnderfill = needsUnderfillFix(bestResult);
-
-      if (roleHardcapMode === 'strict') {
-        const getCompositeScore = (result, prev) => {
-          const fairnessScore = calculateScore(result, prev);
-          const softExceeds = countSoftExceed(result, 72);
-          const hardExceeds = countHardExceed(result, 75);
-          return (hardExceeds * 1000) + (fairnessScore * 100) + softExceeds;
-        };
-
-        const maxAttempts = 50;
-        let bestCompositeScore = getCompositeScore(bestResult, prev);
-        let bestSoftExceeds = countSoftExceed(bestResult, 72);
-
-        if (bestSoftExceeds > 0 || bestNeedsUnderfill) {
-          let attemptsPerformed = 0;
-          for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-            setLoading(true, `결과 최적화 중… (재시도 ${attempt}/${maxAttempts})`);
-            await new Promise(resolve => setTimeout(resolve, 0));
-
-            const candidateResult = runSchedule(roleHardcapMode, undefined, r3CapEnforced, r1CapEnforced);
-            const candidateSoftExceeds = countSoftExceed(candidateResult, 72);
-            const candidateNeedsUnderfill = needsUnderfillFix(candidateResult);
-            const candidateCompositeScore = getCompositeScore(candidateResult, prev);
-
-            if (
-              candidateSoftExceeds < bestSoftExceeds ||
-              (candidateSoftExceeds === bestSoftExceeds && Number(candidateNeedsUnderfill) < Number(bestNeedsUnderfill)) ||
-              (
-                candidateSoftExceeds === bestSoftExceeds &&
-                Number(candidateNeedsUnderfill) === Number(bestNeedsUnderfill) &&
-                candidateCompositeScore < bestCompositeScore
-              )
-            ) {
-              bestResult = candidateResult;
-              bestSoftExceeds = candidateSoftExceeds;
-              bestNeedsUnderfill = candidateNeedsUnderfill;
-              bestCompositeScore = candidateCompositeScore;
-            }
-
-            attemptsPerformed = attempt;
-
-            if (bestSoftExceeds === 0 && !bestNeedsUnderfill) {
-              appendMessage(`72h 초과·빈 슬롯 없이 생성 성공 (재시도 ${attempt}회)`);
-              break;
-            }
-          }
-
-          if (bestSoftExceeds > 0 || bestNeedsUnderfill) {
-            appendMessage(`72h 미초과/빈 슬롯 해소 실패 (재시도 ${attemptsPerformed}/${maxAttempts}) — 최적 후보를 사용합니다.`);
-          }
-        }
-      } else { // relaxed mode
-        let bestScore = calculateScore(bestResult, prev);
-        if (bestScore > 0) {
-          for (let i = 1; i <= 15; i++) {
-            setLoading(true, `결과 최적화 중… (재시도 ${i}/15)`);
-            await new Promise(resolve => setTimeout(resolve, 0));
-  
-            const candidateResult = runSchedule(roleHardcapMode, undefined, r3CapEnforced, r1CapEnforced);
-            const candidateScore = calculateScore(candidateResult, prev);
-  
-            if (candidateScore < bestScore) {
-              bestResult = candidateResult;
-              bestScore = candidateScore;
-            }
-            if (bestScore === 0) break;
-          }
-        }
-      }
-
-      bestNeedsUnderfill = needsUnderfillFix(bestResult);
-      if (bestNeedsUnderfill && roleHardcapMode === 'strict') {
-        appendMessage('최적 결과에 빈 슬롯 발생. 완화 모드로 재시도...');
-        await new Promise(resolve => setTimeout(resolve, 0));
+        console.warn('Constraint dropping step 1 failed. All constraints were applied.', e);
+        appendMessage('1단계 실패. 2단계: R1 주간 당직 제한을 완화하여 재시도합니다...');
         
-        const relaxedResult = runSchedule('relaxed');
-        
-        if (!needsUnderfillFix(relaxedResult)) {
-          bestResult = relaxedResult;
-          setRoleHardcapMode('relaxed');
-          appendMessage('완화 모드로 빈 슬롯을 채웠습니다.');
-        } else {
-           appendMessage('완화 모드로도 빈 슬롯을 채울 수 없습니다. 입력 제약을 확인해주세요.');
+        // Attempt 2: Drop R1 weekly cap
+        try {
+          bestResult = runSchedule(roleHardcapMode, undefined, initialR3Cap, false, 'strict'); // enforceR1WeeklyCap = false
+          appendMessage('R1 주간 당직 2회 제한 규칙을 포기했습니다 😥');
+        } catch (e2) {
+          console.warn('Constraint dropping step 2 failed. R1 weekly cap was dropped.', e2);
+          appendMessage('2단계 실패. 3단계: 주간 근무 시간 제한을 완화하여 재시도합니다...');
+
+          // Attempt 3: Drop R1 cap AND weekly hour cap
+          try {
+            bestResult = runSchedule(roleHardcapMode, undefined, initialR3Cap, false, 'none'); // weeklyHourCapMode = 'none'
+            appendMessage('기본 주간 근무 시간(72시간) 제한을 완화했습니다 (최대 80시간 적용) 😥');
+          } catch (e3) {
+            console.error('Constraint dropping step 3 failed. All constraints were relaxed.', e3);
+            appendMessage('최종 실패: 모든 제약을 완화해도 해를 찾을 수 없습니다. 입력값을 확인해주세요.');
+            throw e3; // Re-throw the final error to be caught by the outer handler
+          }
         }
       }
 
@@ -1128,7 +1053,7 @@ function signed(n) {
 
 function appendMessage(msg) {
   if (!msg) return;
-  messages.textContent = messages.textContent ? `${messages.textContent} | ${msg}` : msg;
+  messages.innerHTML = messages.innerHTML ? `${messages.innerHTML}<br>${msg}` : msg;
 }
 
 function isDiagnosticsEnabled() {

@@ -6,12 +6,6 @@ const solver = typeof window !== 'undefined' ? await ensureSolver() : null;
 const DUTY_HOURS = { weekday: 13.5, weekend: 21 };
 const REGULAR_HOURS = 8;
 const WEEK_HARD_MAX = 72;
-const TOTAL_DUTY_SOFT_WEIGHT = 0;
-const WEEK_SOFT_WEIGHT = 0;
-const UNDERFILL_WEIGHT = 100000; // Keep this high to ensure slots are filled
-const CARRYOVER_WEIGHT = 0;
-const DAYOFF_CARRYOVER_WEIGHT = 0;
-const RANDOM_JITTER = 1e-3;
 
 export function generateSchedule(params) {
   if (!solver) {
@@ -59,6 +53,7 @@ function prepareContext(params) {
     randomSeed = null,
     enforceR3WeeklyCap = false,
     enforceR1WeeklyCap = false,
+    weeklyHourCapMode = 'strict',
   } = params || {};
 
   if (!employees || employees.length < 2) {
@@ -152,6 +147,31 @@ function prepareContext(params) {
     weekendSlots,
   });
 
+  const r1s = employeesWithMeta.filter(p => p.klass === 'R1');
+  const unavoidableWeekKeys = new Set();
+
+  if (r1s.length > 0) {
+    const r1SlotsPerWeek = new Map();
+    for (const wk of weekKeys) {
+      r1SlotsPerWeek.set(wk, 0);
+    }
+
+    for (const date of days) {
+      const wk = weekKeyByMode(date, start, weekMode);
+      for (let slot = 0; slot < 2; slot += 1) {
+        if (requiredClassFor(date, holidaySet, slot) === 'R1') {
+          r1SlotsPerWeek.set(wk, (r1SlotsPerWeek.get(wk) || 0) + 1);
+        }
+      }
+    }
+
+    for (const [wk, count] of r1SlotsPerWeek.entries()) {
+      if (count > r1s.length * 2) {
+        unavoidableWeekKeys.add(wk);
+      }
+    }
+  }
+
   return {
     start,
     days,
@@ -179,6 +199,8 @@ function prepareContext(params) {
     vacationWeekdays,
     enforceR3WeeklyCap,
     enforceR1WeeklyCap,
+    weeklyHourCapMode,
+    unavoidableWeekKeys,
   };
 }
 
@@ -321,6 +343,8 @@ function buildModel(ctx) {
     vacationWeekdays,
     enforceR3WeeklyCap,
     enforceR1WeeklyCap,
+    weeklyHourCapMode,
+    unavoidableWeekKeys,
   } = ctx;
 
   const model = {
@@ -345,10 +369,6 @@ function buildModel(ctx) {
     for (let slot = 0; slot < 2; slot += 1) {
       const constraintName = slotConstraintName(i, slot);
       model.constraints[constraintName] = { equal: 1 };
-      const underfillName = `underfill_${i}_${slot}`;
-      model.variables[underfillName] = { penalty: UNDERFILL_WEIGHT, [constraintName]: 1 };
-      model.binaries[underfillName] = 1;
-      underfillVars.push({ name: underfillName, dayIndex: i, slot });
     }
   }
 
@@ -365,14 +385,21 @@ function buildModel(ctx) {
   // Total weekly hour constraints (duty + regular)
   for (const person of employees) {
     for (const wk of weekKeys) {
-      const cap = vacationKlasses.has(person.klass) ? 80 : 72;
-      const numWeekdays = weekdaysInWeek.get(wk) || 0;
-      const numVacationDays = vacationWeekdays.get(person.id)?.get(wk) || 0;
-      const effectiveCap = cap - (numWeekdays * REGULAR_HOURS) + (numVacationDays * REGULAR_HOURS);
-
-      const constraintName = `total_week_hours_${person.id}_${wk}`;
-      model.constraints[constraintName] = { max: effectiveCap };
-    }
+            let cap;
+            if (weeklyHourCapMode === 'strict') {
+              // Strict mode: 72h, but 80h if there's a vacationer in the class
+              cap = vacationKlasses.has(person.klass) ? 80 : 72;
+            } else {
+              // Relaxed mode (stage 3): 80h for everyone
+              cap = 80;
+            }
+            
+            const numWeekdays = weekdaysInWeek.get(wk) || 0;
+            const numVacationDays = vacationWeekdays.get(person.id)?.get(wk) || 0;
+            const effectiveCap = cap - (numWeekdays * REGULAR_HOURS) + (numVacationDays * REGULAR_HOURS);
+      
+            const constraintName = `total_week_hours_${person.id}_${wk}`;
+            model.constraints[constraintName] = { max: effectiveCap };    }
   }
 
   // Day-off balance constraints (+/-3 for non-R3s)
@@ -446,8 +473,8 @@ function buildModel(ctx) {
     for (const person of r1s) {
       for (const wk of weekKeys) {
         const constraintName = `r1_weekly_cap_${person.id}_${wk}`;
-        model.constraints[constraintName] = { max: 2 };
-      }
+                    const cap = unavoidableWeekKeys.has(wk) ? 3 : 2;
+                    model.constraints[constraintName] = { max: cap };      }
     }
   }
 
@@ -505,15 +532,19 @@ function buildModel(ctx) {
           continue;
         }
         const varName = `x_${dayIdx}_${slot}_${person.id}`;
-        const penalty = buildAssignmentPenalty({ person, slot, random, dutyHours, isWeekday });
         model.variables[varName] = {
-          penalty,
           [slotConstraint]: 1,
           [personDayConstraint(person.id, dayIdx)]: 1,
         };
         // Add to total week hours constraint
-        const coefficient = isWeekday ? (DUTY_HOURS.weekday - REGULAR_HOURS) : DUTY_HOURS.weekend;
-        model.variables[varName][`total_week_hours_${person.id}_${weekKey}`] = coefficient;
+        // The `effectiveCap` on the RHS pre-subtracts all regular hours.
+        // The coefficient here represents the *additional* hours a duty adds compared to that baseline.
+        let hourCoefficient = isWeekday ? DUTY_HOURS.weekday : DUTY_HOURS.weekend;
+        // If the duty generates a day-off, it saves 8 regular hours on the next day.
+        if (nextDayIsWorkday) {
+          hourCoefficient -= REGULAR_HOURS;
+        }
+        model.variables[varName][`total_week_hours_${person.id}_${weekKey}`] = hourCoefficient;
 
         // R3 주 1회 당직 제약 변수 추가
         if (enforceR3WeeklyCap && person.klass === 'R3') {
@@ -594,15 +625,7 @@ function buildModel(ctx) {
 }
 
 
-function buildAssignmentPenalty({ person, slot, random, dutyHours, isWeekday }) {
-  let penalty = 0;
-  if (slot === 0 && person.carryover.byung) penalty += person.carryover.byung * CARRYOVER_WEIGHT;
-  if (slot === 1 && person.carryover.eung) penalty += person.carryover.eung * CARRYOVER_WEIGHT;
-  if (isWeekday && person.carryover.off) penalty += person.carryover.off * DAYOFF_CARRYOVER_WEIGHT;
-  penalty += random() * RANDOM_JITTER;
-  penalty += dutyHours * 0.01;
-  return penalty;
-}
+
 
 function isEligibleForSlot({ person, neededClass, date, dayKey, slot, isWeekday, holidaySet, dayIdx, priorCooldownIndex }) {
   if ((person.klass || '') !== neededClass) return false;
@@ -762,84 +785,81 @@ function rebuildLedger({ ctx, schedule }) {
   const people = employees.map((p) => ({
     ...p,
     weeklyHours: Object.fromEntries(weekKeys.map((wk) => [wk, 0])),
-    dutyCount: 0,
-    weekdayDutyCount: 0,
-    weekendDutyCount: 0,
-    _dutyHoursAccum: 0,
-    _byung: 0,
-    _eung: 0,
-    offDayKeys: new Set(),
+    dutyCount: 0, weekdayDutyCount: 0, weekendDutyCount: 0,
+    _dutyHoursAccum: 0, _byung: 0, _eung: 0,
     regularOffDayKeys: new Set(),
     lastDutyIndex: -999,
   }));
-
   const byId = new Map(people.map((p) => [p.id, p]));
 
-  applyPriorOffDays({ people, start, holidaySet, priorDayDuty });
-
-  for (let idx = 0; idx < schedule.length; idx += 1) {
-    const cell = schedule[idx];
+  // Step 1: Determine all day-offs first.
+  if (priorDayDuty) {
+    const names = new Set([priorDayDuty.byung, priorDayDuty.eung].filter(Boolean));
+    if (names.size > 0 && ctx.days.length > 0) {
+      const firstDay = ctx.days[0];
+      if (isWorkday(firstDay, holidaySet)) {
+        for (const p of people) {
+          if (names.has(p.name)) p.regularOffDayKeys.add(fmtDate(firstDay));
+        }
+      }
+    }
+  }
+  for (const cell of schedule) {
     const date = cell.date;
-    const weekKey = weekKeyByMode(date, start, weekMode);
-    const workday = isWorkday(date, holidaySet);
-
-    cell.duties.forEach((duty, slot) => {
+    (cell.duties || []).forEach((duty) => {
       const p = byId.get(duty?.id);
       if (!p) return;
-      const add = workday ? DUTY_HOURS.weekday : DUTY_HOURS.weekend;
-      p.weeklyHours[weekKey] = (p.weeklyHours[weekKey] || 0) + add;
-      p._dutyHoursAccum += add;
-      p.dutyCount += 1;
-      if (workday) p.weekdayDutyCount += 1; else p.weekendDutyCount += 1;
-      if (slot === 0) p._byung += 1; else if (slot === 1) p._eung += 1;
-      p.lastDutyIndex = idx;
-
       const nextDay = addDays(date, 1);
-      // A day-off is granted if the day after the duty is a workday.
       if (isWorkday(nextDay, holidaySet)) {
-        const nextDayKey = fmtDate(nextDay);
-        p.regularOffDayKeys.add(nextDayKey);
+        p.regularOffDayKeys.add(fmtDate(nextDay));
       }
     });
   }
 
-  for (let idx = 0; idx < schedule.length; idx += 1) {
-    const cell = schedule[idx];
-    const date = cell.date;
-    if (!isWorkday(date, holidaySet)) {
-      cell.regulars = [];
-      continue;
-    }
-    const weekKey = weekKeyByMode(date, start, weekMode);
+  // Step 2: Calculate total hours day by day, correctly.
+  for (const cell of schedule) {
     const key = cell.key;
+    const date = cell.date;
+    const weekKey = weekKeyByMode(date, start, weekMode);
+    const workday = isWorkday(date, holidaySet);
+    const dutyIdsOnThisDay = new Set((cell.duties || []).map(d => d.id));
+
     for (const p of people) {
       if (p.vacationDays.has(key)) continue;
-      if (p.regularOffDayKeys.has(key)) continue;
-      if (p.offDayKeys.has(key)) continue;
-      p.weeklyHours[weekKey] = (p.weeklyHours[weekKey] || 0) + REGULAR_HOURS;
-    }
-    cell.regulars = [];
-  }
 
+      const isOnDuty = dutyIdsOnThisDay.has(p.id);
+      const isDayOff = p.regularOffDayKeys.has(key);
+      let hoursForThisDay = 0;
+
+      if (workday) { // It's a workday
+        if (!isDayOff) {
+          hoursForThisDay += REGULAR_HOURS; // Add regular 8 hours
+        }
+        if (isOnDuty) {
+          hoursForThisDay += DUTY_HOURS.weekday; // Add duty 13.5 hours on top
+        }
+      } else { // It's a weekend/holiday
+        if (isOnDuty) {
+          hoursForThisDay += DUTY_HOURS.weekend; // Only duty hours
+        }
+      }
+      
+      if (hoursForThisDay > 0) {
+        p.weeklyHours[weekKey] = (p.weeklyHours[weekKey] || 0) + hoursForThisDay;
+      }
+      
+      // Recalculate stats separately for clarity
+      if (isOnDuty) {
+        p.dutyCount += 1;
+        p._dutyHoursAccum += workday ? DUTY_HOURS.weekday : DUTY_HOURS.weekend;
+        if (workday) p.weekdayDutyCount += 1; else p.weekendDutyCount += 1;
+        const slot = (cell.duties || []).findIndex(d => d.id === p.id);
+        if (slot === 0) p._byung += 1; else if (slot === 1) p._eung += 1;
+      }
+    }
+  }
   return people;
 }
-
-function applyPriorOffDays({ people, start, holidaySet, priorDayDuty }) {
-  if (!priorDayDuty) return;
-  const names = new Set([priorDayDuty.byung, priorDayDuty.eung].filter(Boolean));
-  if (!names.size) return;
-  const startKey = fmtDate(start);
-  const startIsWorkday = isWorkday(start, holidaySet);
-  for (const p of people) {
-    if (!names.has(p.name)) continue;
-    if (startIsWorkday) {
-      p.regularOffDayKeys.add(startKey);
-    } else {
-      p.offDayKeys.add(startKey);
-    }
-  }
-}
-
 function buildWarnings({ people }) {
   const warnings = [];
   for (const p of people) {
