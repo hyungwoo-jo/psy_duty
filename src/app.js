@@ -206,9 +206,9 @@ async function onGenerate() {
       const vacations = parseVacationRanges(vacationsInput.value);
       const prior = getPriorDayDutyFromUI();
 
-      const runSchedule = (mode, seed, r3Cap = false) => {
+      const runSchedule = (mode, seed, r3Cap = false, r1Cap = false) => {
         const randomSeed = Number.isFinite(seed) ? seed : nextRandomSeed();
-        const args = { startDate, endDate, weeks, weekMode, employees, holidays, dutyUnavailableByName: Object.fromEntries(dutyUnavailable), dayoffWishByName: Object.fromEntries(dayoffWish), vacationDaysByName: Object.fromEntries(vacations), priorDayDuty: prior, optimization, weekdaySlots, weekendSlots: 2, timeBudgetMs: budgetMs, roleHardcapMode: mode, prevStats: prev, randomSeed, enforceR3WeeklyCap: r3Cap };
+        const args = { startDate, endDate, weeks, weekMode, employees, holidays, dutyUnavailableByName: Object.fromEntries(dutyUnavailable), dayoffWishByName: Object.fromEntries(dayoffWish), vacationDaysByName: Object.fromEntries(vacations), priorDayDuty: prior, optimization, weekdaySlots, weekendSlots: 2, timeBudgetMs: budgetMs, roleHardcapMode: mode, prevStats: prev, randomSeed, enforceR3WeeklyCap: r3Cap, enforceR1WeeklyCap: r1Cap };
         return generateSchedule(args);
       };
 
@@ -255,17 +255,60 @@ async function onGenerate() {
         return score;
       };
 
+      const r1s = employees.filter(e => e.klass === 'R1');
+      let anyR1HasVacation = false;
+      if (r1s.length > 0) {
+          const scheduleDays = rangeDays(new Date(startDate), weeks * 7).map(d => fmtDate(d));
+          for (const r1 of r1s) {
+              const r1Vacations = vacations.get(r1.name) || new Set();
+              for (const vacDay of r1Vacations) {
+                  if (scheduleDays.has(vacDay)) {
+                      anyR1HasVacation = true;
+                      break;
+                  }
+              }
+              if (anyR1HasVacation) break;
+          }
+      }
+
+      const r3s = employees.filter(e => e.klass === 'R3');
+      let anyR3HasVacation = false;
+      if (r3s.length > 0) {
+          const scheduleDays = rangeDays(new Date(startDate), weeks * 7).map(d => fmtDate(d));
+          for (const r3 of r3s) {
+              const r3Vacations = vacations.get(r3.name) || new Set();
+              for (const vacDay of r3Vacations) {
+                  if (scheduleDays.has(vacDay)) {
+                      anyR3HasVacation = true;
+                      break;
+                  }
+              }
+              if (anyR3HasVacation) break;
+          }
+      }
+
       let bestResult;
-      let isR3CapSuccessful = true;
+      let r1CapEnforced = true;
+      let r3CapEnforced = true;
+
       try {
-        appendMessage('R3 주간 1회 당직 제약 적용하여 생성 시도...');
-        bestResult = runSchedule(roleHardcapMode, undefined, true);
-        appendMessage('R3 주간 1회 당직 제약 적용 성공.');
+          appendMessage('R1/R3 주간 당직 제약 적용하여 생성 시도...');
+          const initialR1Cap = !anyR1HasVacation;
+          const initialR3Cap = !anyR3HasVacation;
+
+          bestResult = runSchedule(roleHardcapMode, undefined, initialR3Cap, initialR1Cap);
+          appendMessage('R1/R3 주간 당직 제약 적용 성공.');
+
+          r1CapEnforced = initialR1Cap;
+          r3CapEnforced = initialR3Cap;
+
       } catch (e) {
-        console.warn('Scheduling failed with R3 weekly cap, retrying without it.', e);
-        appendMessage('R3 주간 1회 당직 제약으로 해를 찾지 못했습니다. 해당 제약을 비활성화하고 다시 시도합니다.');
-        isR3CapSuccessful = false;
-        bestResult = runSchedule(roleHardcapMode, undefined, false);
+          console.warn('Scheduling failed with R1/R3 weekly caps, retrying without them.', e);
+          appendMessage('R1/R3 주간 당직 제약으로 해를 찾지 못했습니다. 해당 제약을 비활성화하고 다시 시도합니다.');
+
+          r1CapEnforced = false;
+          r3CapEnforced = false;
+          bestResult = runSchedule(roleHardcapMode, undefined, false, false);
       }
       let bestNeedsUnderfill = needsUnderfillFix(bestResult);
 
@@ -287,7 +330,7 @@ async function onGenerate() {
             setLoading(true, `결과 최적화 중… (재시도 ${attempt}/${maxAttempts})`);
             await new Promise(resolve => setTimeout(resolve, 0));
 
-            const candidateResult = runSchedule(roleHardcapMode, undefined, isR3CapSuccessful);
+            const candidateResult = runSchedule(roleHardcapMode, undefined, r3CapEnforced, r1CapEnforced);
             const candidateSoftExceeds = countSoftExceed(candidateResult, 72);
             const candidateNeedsUnderfill = needsUnderfillFix(candidateResult);
             const candidateCompositeScore = getCompositeScore(candidateResult, prev);
@@ -326,7 +369,7 @@ async function onGenerate() {
             setLoading(true, `결과 최적화 중… (재시도 ${i}/15)`);
             await new Promise(resolve => setTimeout(resolve, 0));
   
-            const candidateResult = runSchedule(roleHardcapMode, undefined, isR3CapSuccessful);
+            const candidateResult = runSchedule(roleHardcapMode, undefined, r3CapEnforced, r1CapEnforced);
             const candidateScore = calculateScore(candidateResult, prev);
   
             if (candidateScore < bestScore) {

@@ -58,6 +58,7 @@ function prepareContext(params) {
     prevStats = null,
     randomSeed = null,
     enforceR3WeeklyCap = false,
+    enforceR1WeeklyCap = false,
   } = params || {};
 
   if (!employees || employees.length < 2) {
@@ -177,6 +178,7 @@ function prepareContext(params) {
     weekdaysInWeek,
     vacationWeekdays,
     enforceR3WeeklyCap,
+    enforceR1WeeklyCap,
   };
 }
 
@@ -317,6 +319,7 @@ function buildModel(ctx) {
     weekdaysInWeek,
     vacationWeekdays,
     enforceR3WeeklyCap,
+    enforceR1WeeklyCap,
   } = ctx;
 
   const model = {
@@ -432,6 +435,17 @@ function buildModel(ctx) {
     }
   }
 
+  // R1 주 2회 당직 제약
+  if (enforceR1WeeklyCap) {
+    const r1s = employees.filter(p => p.klass === 'R1');
+    for (const person of r1s) {
+      for (const wk of weekKeys) {
+        const constraintName = `r1_weekly_cap_${person.id}_${wk}`;
+        model.constraints[constraintName] = { max: 2 };
+      }
+    }
+  }
+
   // Role caps
   for (const person of employees) {
     if (person.klass === 'R3') {
@@ -496,6 +510,14 @@ function buildModel(ctx) {
         // R3 주 1회 당직 제약 변수 추가
         if (enforceR3WeeklyCap && person.klass === 'R3') {
           const constraintName = `r3_weekly_cap_${person.id}_${weekKey}`;
+          if (model.constraints[constraintName]) {
+            model.variables[varName][constraintName] = 1;
+          }
+        }
+
+        // R1 주 2회 당직 제약 변수 추가
+        if (enforceR1WeeklyCap && person.klass === 'R1') {
+          const constraintName = `r1_weekly_cap_${person.id}_${weekKey}`;
           if (model.constraints[constraintName]) {
             model.variables[varName][constraintName] = 1;
           }
