@@ -493,6 +493,9 @@ function buildModel(ctx) {
     const dutyHours = isWeekday ? DUTY_HOURS.weekday : DUTY_HOURS.weekend;
     const weekKey = weekKeyByMode(date, start, weekMode);
 
+    const nextDay = addDays(date, 1);
+    const nextDayIsWorkday = (dayIdx < days.length - 1) && isWorkday(nextDay, holidaySet);
+
     for (let slot = 0; slot < 2; slot += 1) {
       const neededClass = requiredClassFor(date, holidaySet, slot);
       const slotConstraint = slotConstraintName(dayIdx, slot);
@@ -529,7 +532,7 @@ function buildModel(ctx) {
         }
 
         // Add to day-off cap constraint if applicable
-        if (isWeekday) {
+        if (nextDayIsWorkday) {
           if (person.klass !== 'R3') {
             model.variables[varName][`dayoff_cap_${person.id}`] = 1;
           } else if (r3s.length > 1) {
@@ -568,7 +571,7 @@ function buildModel(ctx) {
               model.variables[varName][`r3_balance_eung_1`] = sign;
               model.variables[varName][`r3_balance_eung_2`] = -sign;
             }
-            if (isWeekday) {
+            if (nextDayIsWorkday) {
               model.variables[varName][`r3_balance_dayoff_1`] = sign;
               model.variables[varName][`r3_balance_dayoff_2`] = -sign;
             }
