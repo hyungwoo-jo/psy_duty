@@ -206,56 +206,22 @@ async function onGenerate() {
       const vacations = parseVacationRanges(vacationsInput.value);
       const prior = getPriorDayDutyFromUI();
 
-      const runSchedule = (mode, seed) => {
+      const runSchedule = (mode, seed, r3Cap = false) => {
         const randomSeed = Number.isFinite(seed) ? seed : nextRandomSeed();
-        const args = { startDate, endDate, weeks, weekMode, employees, holidays, dutyUnavailableByName: Object.fromEntries(dutyUnavailable), dayoffWishByName: Object.fromEntries(dayoffWish), vacationDaysByName: Object.fromEntries(vacations), priorDayDuty: prior, optimization, weekdaySlots, weekendSlots: 2, timeBudgetMs: budgetMs, roleHardcapMode: mode, prevStats: prev, randomSeed };
+        const args = { startDate, endDate, weeks, weekMode, employees, holidays, dutyUnavailableByName: Object.fromEntries(dutyUnavailable), dayoffWishByName: Object.fromEntries(dayoffWish), vacationDaysByName: Object.fromEntries(vacations), priorDayDuty: prior, optimization, weekdaySlots, weekendSlots: 2, timeBudgetMs: budgetMs, roleHardcapMode: mode, prevStats: prev, randomSeed, enforceR3WeeklyCap: r3Cap };
         return generateSchedule(args);
       };
 
-      const needsUnderfillFix = (result) => result.schedule.some((day) => (day.duties?.length || 0) < 2 || day.underfilled);
-
-      const calculateScore = (result, prev) => {
-        let score = 0;
-        const { byungCount, eungCount } = computeRoleAndOffCounts(result);
-        const empById = new Map(result.employees.map((e) => [e.id, e]));
-
-        for (const klass of ['R1', 'R2']) {
-          const peopleInClass = result.stats.filter(s => (empById.get(s.id)?.klass || '기타') === klass);
-          if (!peopleInClass.length) continue;
-
-          for (const role of [{ key: 'byung', countMap: byungCount }, { key: 'eung', countMap: eungCount }]) {
-            const prevList = (prev.entriesByClassRole.get(klass)?.[role.key]) || [];
-            const prevByName = new Map(prevList.map((e) => [e.name, Number(e.delta) || 0]));
-            
-            const finalCounts = peopleInClass.map((p) => ({
-              id: p.id,
-              name: p.name,
-              count: (Number(role.countMap.get(p.id) || 0)) + (prevByName.get(p.name) || 0),
-            }));
-
-            const { deltas: finalDeltas } = computeCarryoverDeltas(finalCounts);
-            
-            for (const d of finalDeltas) {
-              if (Math.abs(d.delta) >= 2) {
-                score += 10; // Heavy penalty for ±2 deviations
-              }
-            }
-          }
-        }
-
-        const r3NonPediatric = result.employees.filter(p => p.klass === 'R3' && !p.pediatric);
-        if (r3NonPediatric.length === 2) {
-          const p1 = r3NonPediatric[0];
-          const p2 = r3NonPediatric[1];
-          score += Math.abs((byungCount.get(p1.id) || 0) - (byungCount.get(p2.id) || 0));
-          score += Math.abs((eungCount.get(p1.id) || 0) - (eungCount.get(p2.id) || 0));
-        }
-        
-        score += countHardExceed(result, 75) * 100; // Very heavy penalty
-        return score;
+      let bestResult;
+      try {
+        appendMessage('R3 주간 1회 당직 제약 적용하여 생성 시도...');
+        bestResult = runSchedule(roleHardcapMode, undefined, true);
+        appendMessage('R3 주간 1회 당직 제약 적용 성공.');
+      } catch (e) {
+        console.warn('Scheduling failed with R3 weekly cap, retrying without it.', e);
+        appendMessage('R3 주간 1회 당직 제약으로 해를 찾지 못했습니다. 해당 제약을 비활성화하고 다시 시도합니다.');
+        bestResult = runSchedule(roleHardcapMode, undefined, false);
       }
-
-      let bestResult = runSchedule(roleHardcapMode);
       let bestNeedsUnderfill = needsUnderfillFix(bestResult);
 
       if (roleHardcapMode === 'strict') {

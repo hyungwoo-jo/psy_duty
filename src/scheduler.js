@@ -57,6 +57,7 @@ function prepareContext(params) {
     roleHardcapMode = 'strict',
     prevStats = null,
     randomSeed = null,
+    enforceR3WeeklyCap = false,
   } = params || {};
 
   if (!employees || employees.length < 2) {
@@ -175,6 +176,7 @@ function prepareContext(params) {
     vacationKlasses,
     weekdaysInWeek,
     vacationWeekdays,
+    enforceR3WeeklyCap,
   };
 }
 
@@ -314,6 +316,7 @@ function buildModel(ctx) {
     vacationKlasses,
     weekdaysInWeek,
     vacationWeekdays,
+    enforceR3WeeklyCap,
   } = ctx;
 
   const model = {
@@ -382,6 +385,15 @@ function buildModel(ctx) {
 
   // R3 day-off balancing (+/-1 within R3 group)
   const r3s = employees.filter(p => p.klass === 'R3');
+
+  // R3 weekly duty balancing (max 1 per week, if enabled)
+  if (enforceR3WeeklyCap && r3s.length > 0) {
+    for (const person of r3s) {
+      for (const wk of weekKeys) {
+        model.constraints[`r3_weekly_duty_cap_${person.id}_${wk}`] = { max: 1 };
+      }
+    }
+  }
   if (r3s.length > 1) {
     model.variables['min_r3_dayoffs'] = { penalty: 0 };
     model.variables['max_r3_dayoffs'] = { penalty: 0 };
@@ -471,8 +483,10 @@ function buildModel(ctx) {
         const coefficient = isWeekday ? (DUTY_HOURS.weekday - REGULAR_HOURS) : DUTY_HOURS.weekend;
         model.variables[varName][`total_week_hours_${person.id}_${weekKey}`] = coefficient;
 
+        const nextDayIsWorkday = (dayIdx < days.length - 1) ? isWorkday(days[dayIdx + 1], holidaySet) : false;
+
         // Add to day-off cap constraint if applicable
-        if (isWeekday) {
+        if (nextDayIsWorkday) {
           if (person.klass !== 'R3') {
             model.variables[varName][`dayoff_cap_${person.id}`] = 1;
           } else if (r3s.length > 1) {
@@ -488,6 +502,9 @@ function buildModel(ctx) {
         }
         if (person.klass === 'R3') {
           model.variables[varName][`role_combined_${person.id}`] = 1;
+          if (enforceR3WeeklyCap && r3s.length > 0) {
+            model.variables[varName][`r3_weekly_duty_cap_${person.id}_${weekKey}`] = 1;
+          }
         } else {
           if (slot === 0 && model.constraints[roleCapConstraint(person.id, 'byung')]) {
             model.variables[varName][roleCapConstraint(person.id, 'byung')] = 1;
@@ -734,13 +751,11 @@ function rebuildLedger({ ctx, schedule }) {
       if (slot === 0) p._byung += 1; else if (slot === 1) p._eung += 1;
       p.lastDutyIndex = idx;
 
-      const next = addDays(date, 1);
-      const nextKey = fmtDate(next);
-      const nextWorkday = isWorkday(next, holidaySet);
-      if (workday) {
-        p.regularOffDayKeys.add(nextKey);
-      } else if (!nextWorkday) {
-        p.offDayKeys.add(nextKey);
+      const nextDay = addDays(date, 1);
+      // A day-off is granted if the day after the duty is a workday.
+      if (isWorkday(nextDay, holidaySet)) {
+        const nextDayKey = fmtDate(nextDay);
+        p.regularOffDayKeys.add(nextDayKey);
       }
     });
   }
