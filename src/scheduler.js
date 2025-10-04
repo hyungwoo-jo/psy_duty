@@ -368,8 +368,15 @@ function buildModel(ctx) {
   }
 
   // Day-off balance constraints (+/-3 for non-R3s)
-  const weekdayCount = days.filter(d => isWorkday(d, holidaySet)).length;
-  const totalDayoffs = weekdayCount * 2; // Assuming 2 slots on weekdays
+  let actualPossibleDayoffs = 0;
+  for (let i = 0; i < days.length; i++) {
+    const currentDay = days[i];
+    const nextDay = days[i + 1];
+    if (nextDay && isWorkday(currentDay, holidaySet) && isWorkday(nextDay, holidaySet)) {
+      actualPossibleDayoffs += 2;
+    }
+  }
+  const totalDayoffs = actualPossibleDayoffs; // Use this instead of weekdayCount * 2
   const eligibleForDayoffCap = employees.filter(p => p.klass !== 'R3');
   const avgDayoffs = totalDayoffs / Math.max(1, eligibleForDayoffCap.length);
   const minDayoffs = Math.max(0, Math.floor(avgDayoffs) - 3);
