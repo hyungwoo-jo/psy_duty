@@ -27,7 +27,6 @@ const icsPreview = document.querySelector('#ics-preview');
 const hardcapToggle = document.querySelector('#role-hardcap-toggle');
 const toggleR1Cap = document.querySelector('#toggle-r1-cap');
 const toggleR3Cap = document.querySelector('#toggle-r3-cap');
-const toggleDayoffBalance = document.querySelector('#toggle-dayoff-balance');
 let roleHardcapMode = hardcapToggle?.dataset.mode === 'relaxed' ? 'relaxed' : 'strict';
 // 최적화 선택 UI 제거: 기본 strong
 // 주 계산 모드 옵션 제거: 달력 기준(월–일) 고정
@@ -213,7 +212,7 @@ async function onGenerate() {
       // --- Read ILP rule toggles from UI ---
       const enforceR1Cap = toggleR1Cap.checked;
       const enforceR3Cap = toggleR3Cap.checked;
-      const enforceDayoffBalance = toggleDayoffBalance.checked;
+      const enforceDayoffBalance = true; // Always enforce day-off balance
 
       const runSchedule = (mode, seed, r3Cap = false, r1Cap = false, hourCap = 'strict') => {
         const randomSeed = Number.isFinite(seed) ? seed : nextRandomSeed();
@@ -280,7 +279,7 @@ async function onGenerate() {
         appendMessage('생성된 스케줄들을 평가하여 최적의 안을 선택합니다...');
         
         const countOvertimeWeeks = (result, limit) => {
-          if (!result || !result.stats) return Infinity;
+          if (!result || !result.stats) return 0;
           let count = 0;
           for (const person of result.stats) {
             for (const week in person.weeklyHours) {
@@ -292,26 +291,66 @@ async function onGenerate() {
           return count;
         };
 
+        const countCarryoverViolations = (result, dayoffLimit, roleLimit) => {
+          if (!result) return 0;
+          let violations = 0;
+          const { byungCount, eungCount, dayOff } = computeRoleAndOffCounts(result);
+          const empById = new Map(result.employees.map((e) => [e.id, e]));
+          const klasses = [...new Set(result.employees.map(e => e.klass || '기타'))];
+
+          for (const klass of klasses) {
+            const peopleInClass = result.stats.filter(s => (empById.get(s.id)?.klass || '기타') === klass);
+            if (!peopleInClass.length) continue;
+
+            const roles = [
+              { key: 'off', countMap: dayOff, limit: dayoffLimit },
+              { key: 'byung', countMap: byungCount, limit: roleLimit },
+              { key: 'eung', countMap: eungCount, limit: roleLimit },
+            ];
+
+            for (const role of roles) {
+              if (klass === 'R3' && (role.key === 'byung' || role.key === 'eung')) {
+                continue; // Skip byung/eung score calculation for R3, as it's handled by a hard constraint
+              }
+              const prevList = (prev.entriesByClassRole.get(klass)?.[role.key]) || [];
+              const prevByName = new Map(prevList.map((e) => [e.name, Number(e.delta) || 0]));
+              const finalCounts = peopleInClass.map((p) => ({
+                id: p.id,
+                name: p.name,
+                count: (Number(role.countMap.get(p.id) || 0)) + (prevByName.get(p.name) || 0),
+              }));
+              const { deltas } = computeCarryoverDeltas(finalCounts);
+              for (const d of deltas) {
+                if (Math.abs(d.delta) > role.limit) {
+                  violations++;
+                }
+              }
+            }
+          }
+          return violations;
+        };
+
         let bestResult = null;
-        let minOvertimeCount = Infinity;
+        let minScore = Infinity;
 
         for (const result of finalResults) {
-          const overtimeCount = countOvertimeWeeks(result, 72);
-          if (overtimeCount === 0) {
+          const overtimeScore = countOvertimeWeeks(result, 72);
+          const carryoverScore = countCarryoverViolations(result, 2, 1);
+          const totalScore = overtimeScore + carryoverScore;
+
+          if (totalScore < minScore) {
+            minScore = totalScore;
             bestResult = result;
-            minOvertimeCount = 0;
-            break;
           }
-          if (overtimeCount < minOvertimeCount) {
-            minOvertimeCount = overtimeCount;
-            bestResult = result;
+          if (minScore === 0) {
+            break; // Found a perfect solution, no need to check further
           }
         }
         
-        if (minOvertimeCount === 0) {
-            appendMessage(`성공! ${finalResults.length}번의 시도 중 72시간 초과가 없는 최적의 스케줄을 찾았습니다!`);
+        if (minScore === 0) {
+            appendMessage(`성공! ${finalResults.length}번의 시도 중 위반사항이 없는 최적의 스케줄을 찾았습니다!`);
         } else {
-            appendMessage(`경고: 72시간 초과가 없는 스케줄을 찾지 못했습니다. ${finalResults.length}개의 후보 중 초과가 가장 적은 스케줄을 선택합니다 (최소 초과 ${minOvertimeCount}건).`);
+            appendMessage(`경고: 위반사항이 없는 스케줄을 찾지 못했습니다. ${finalResults.length}개의 후보 중 위반 점수가 가장 낮은 스케줄을 선택합니다 (최저 점수: ${minScore}).`);
         }
 
         lastResult = bestResult;
