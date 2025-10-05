@@ -276,24 +276,27 @@ async function onGenerate() {
           return;
         }
 
-        appendMessage('생성된 스케줄들을 평가하여 최적의 안을 선택합니다...');
+        appendMessage('생성된 스케줄들을 새로운 점수 체계로 평가합니다...');
         
-        const countOvertimeWeeks = (result, limit) => {
+        const calculateOvertimeScore = (result) => {
           if (!result || !result.stats) return 0;
-          let count = 0;
+          let score = 0;
           for (const person of result.stats) {
             for (const week in person.weeklyHours) {
-              if (person.weeklyHours[week] > limit + 1e-9) {
-                count++;
+              const hours = person.weeklyHours[week];
+              if (hours >= 75) {
+                score += 2;
+              } else if (hours > 72 + 1e-9) {
+                score += 1;
               }
             }
           }
-          return count;
+          return score;
         };
 
-        const countCarryoverViolations = (result, dayoffLimit, roleLimit) => {
+        const calculateCarryoverScore = (result) => {
           if (!result) return 0;
-          let violations = 0;
+          let score = 0;
           const { byungCount, eungCount, dayOff } = computeRoleAndOffCounts(result);
           const empById = new Map(result.employees.map((e) => [e.id, e]));
           const klasses = [...new Set(result.employees.map(e => e.klass || '기타'))];
@@ -303,14 +306,14 @@ async function onGenerate() {
             if (!peopleInClass.length) continue;
 
             const roles = [
-              { key: 'off', countMap: dayOff, limit: dayoffLimit },
-              { key: 'byung', countMap: byungCount, limit: roleLimit },
-              { key: 'eung', countMap: eungCount, limit: roleLimit },
+              { key: 'off', countMap: dayOff },
+              { key: 'byung', countMap: byungCount },
+              { key: 'eung', countMap: eungCount },
             ];
 
             for (const role of roles) {
               if (klass === 'R3' && (role.key === 'byung' || role.key === 'eung')) {
-                continue; // Skip byung/eung score calculation for R3, as it's handled by a hard constraint
+                continue;
               }
               const prevList = (prev.entriesByClassRole.get(klass)?.[role.key]) || [];
               const prevByName = new Map(prevList.map((e) => [e.name, Number(e.delta) || 0]));
@@ -320,22 +323,30 @@ async function onGenerate() {
                 count: (Number(role.countMap.get(p.id) || 0)) + (prevByName.get(p.name) || 0),
               }));
               const { deltas } = computeCarryoverDeltas(finalCounts);
+              
               for (const d of deltas) {
-                if (Math.abs(d.delta) > role.limit) {
-                  violations++;
+                const deltaAbs = Math.abs(d.delta);
+                if (role.key === 'off') {
+                  if (deltaAbs === 1) {
+                    score += 0.5;
+                  } else if (deltaAbs > 1) {
+                    score += (deltaAbs - 1);
+                  }
+                } else { // byung and eung
+                  score += deltaAbs;
                 }
               }
             }
           }
-          return violations;
+          return score;
         };
 
         let bestResult = null;
         let minScore = Infinity;
 
         for (const result of finalResults) {
-          const overtimeScore = countOvertimeWeeks(result, 72);
-          const carryoverScore = countCarryoverViolations(result, 2, 1);
+          const overtimeScore = calculateOvertimeScore(result);
+          const carryoverScore = calculateCarryoverScore(result);
           const totalScore = overtimeScore + carryoverScore;
 
           if (totalScore < minScore) {
@@ -343,16 +354,17 @@ async function onGenerate() {
             bestResult = result;
           }
           if (minScore === 0) {
-            break; // Found a perfect solution, no need to check further
+            break; 
           }
         }
         
         if (minScore === 0) {
-            appendMessage(`성공! ${finalResults.length}번의 시도 중 위반사항이 없는 최적의 스케줄을 찾았습니다!`);
+            appendMessage(`성공! ${finalResults.length}번의 시도 중 점수가 0점인 완벽한 스케줄을 찾았습니다!`);
         } else {
-            appendMessage(`경고: 위반사항이 없는 스케줄을 찾지 못했습니다. ${finalResults.length}개의 후보 중 위반 점수가 가장 낮은 스케줄을 선택합니다 (최저 점수: ${minScore}).`);
+            appendMessage(`경고: 완벽한 스케줄을 찾지 못했습니다. ${finalResults.length}개의 후보 중 가장 점수가 낮은 스케줄을 선택합니다 (최저 점수: ${minScore}).`);
         }
 
+        // Final rendering logic from the original function
         lastResult = bestResult;
         renderSummary(bestResult);
         renderReport(bestResult, { previous: prev });
