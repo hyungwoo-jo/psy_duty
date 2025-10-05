@@ -25,6 +25,9 @@ const loadingTextEl = loadingOverlay ? loadingOverlay.querySelector('.loading-te
 const icsVersionInput = document.querySelector('#ics-version');
 const icsPreview = document.querySelector('#ics-preview');
 const hardcapToggle = document.querySelector('#role-hardcap-toggle');
+const toggleR1Cap = document.querySelector('#toggle-r1-cap');
+const toggleR3Cap = document.querySelector('#toggle-r3-cap');
+const toggleDayoffBalance = document.querySelector('#toggle-dayoff-balance');
 let roleHardcapMode = hardcapToggle?.dataset.mode === 'relaxed' ? 'relaxed' : 'strict';
 // 최적화 선택 UI 제거: 기본 strong
 // 주 계산 모드 옵션 제거: 달력 기준(월–일) 고정
@@ -207,46 +210,15 @@ async function onGenerate() {
       const vacations = parseVacationRanges(vacationsInput.value);
       const prior = getPriorDayDutyFromUI();
 
-      // --- Logic for initial caps, needs to be inside onGenerate to access employees, vacations etc. ---
-      const r1s = employees.filter(e => e.klass === 'R1');
-      let anyR1HasVacation = false;
-      if (r1s.length > 0) {
-          const scheduleDays = rangeDays(new Date(startDate), weeks * 7).map(d => fmtDate(d));
-          for (const r1 of r1s) {
-              const r1Vacations = vacations.get(r1.name) || new Set();
-              for (const vacDay of r1Vacations) {
-                  if (scheduleDays.includes(vacDay)) {
-                      anyR1HasVacation = true;
-                      break;
-                  }
-              }
-              if (anyR1HasVacation) break;
-          }
-      }
-
-      const r3s = employees.filter(e => e.klass === 'R3');
-      let anyR3HasVacation = false;
-      if (r3s.length > 0) {
-          const scheduleDays = rangeDays(new Date(startDate), weeks * 7).map(d => fmtDate(d));
-          for (const r3 of r3s) {
-              const r3Vacations = vacations.get(r3.name) || new Set();
-              for (const vacDay of r3Vacations) {
-                  if (scheduleDays.includes(vacDay)) {
-                      anyR3HasVacation = true;
-                      break;
-                  }
-              }
-              if (anyR3HasVacation) break;
-          }
-      }
-
-      const initialR1Cap = !anyR1HasVacation;
-      const initialR3Cap = !anyR3HasVacation;
+      // --- Read ILP rule toggles from UI ---
+      const enforceR1Cap = toggleR1Cap.checked;
+      const enforceR3Cap = toggleR3Cap.checked;
+      const enforceDayoffBalance = toggleDayoffBalance.checked;
 
       const runSchedule = (mode, seed, r3Cap = false, r1Cap = false, hourCap = 'strict') => {
         const randomSeed = Number.isFinite(seed) ? seed : nextRandomSeed();
         console.log(`[SCHEDULER] Using random seed: ${randomSeed}`);
-        const args = { startDate, endDate, weeks, weekMode, employees, holidays, dutyUnavailableByName: Object.fromEntries(dutyUnavailable), dayoffWishByName: Object.fromEntries(dayoffWish), vacationDaysByName: Object.fromEntries(vacations), priorDayDuty: prior, optimization, weekdaySlots, weekendSlots: 2, timeBudgetMs: budgetMs, roleHardcapMode: mode, prevStats: prev, randomSeed, enforceR3WeeklyCap: r3Cap, enforceR1WeeklyCap: r1Cap, weeklyHourCapMode: hourCap };
+        const args = { startDate, endDate, weeks, weekMode, employees, holidays, dutyUnavailableByName: Object.fromEntries(dutyUnavailable), dayoffWishByName: Object.fromEntries(dayoffWish), vacationDaysByName: Object.fromEntries(vacations), priorDayDuty: prior, optimization, weekdaySlots, weekendSlots: 2, timeBudgetMs: budgetMs, roleHardcapMode: mode, prevStats: prev, randomSeed, enforceR3WeeklyCap: r3Cap, enforceR1WeeklyCap: r1Cap, enforceDayoffBalance, weeklyHourCapMode: hourCap };
         return generateSchedule(args);
       };
 
@@ -270,13 +242,17 @@ async function onGenerate() {
           appendMessage(`${attemptNum}/${MAX_ATTEMPTS}번째 생성 시도...`);
           let currentResult = null;
           
+          // --- Constraint Dropping Architecture ---
           try {
-            currentResult = await runSchedule(roleHardcapMode, undefined, initialR3Cap, initialR1Cap, 'strict');
+            // First attempt with UI settings
+            currentResult = await runSchedule(roleHardcapMode, undefined, enforceR3Cap, enforceR1Cap, 'strict');
           } catch (e) {
             try {
-              currentResult = await runSchedule(roleHardcapMode, undefined, initialR3Cap, false, 'strict');
+              // Fallback 1: Drop R1 cap
+              currentResult = await runSchedule(roleHardcapMode, undefined, enforceR3Cap, false, 'strict');
             } catch (e2) {
-              currentResult = await runSchedule(roleHardcapMode, undefined, initialR3Cap, false, 'none');
+              // Fallback 2: Drop R1 cap and relax hour mode
+              currentResult = await runSchedule(roleHardcapMode, undefined, enforceR3Cap, false, 'none');
             }
           }
           results.push(currentResult);

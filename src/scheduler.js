@@ -53,6 +53,7 @@ function prepareContext(params) {
     randomSeed = null,
     enforceR3WeeklyCap = false,
     enforceR1WeeklyCap = false,
+    enforceDayoffBalance = true,
     weeklyHourCapMode = 'strict',
   } = params || {};
 
@@ -343,6 +344,7 @@ function buildModel(ctx) {
     vacationWeekdays,
     enforceR3WeeklyCap,
     enforceR1WeeklyCap,
+    enforceDayoffBalance,
     weeklyHourCapMode,
     unavoidableWeekKeys,
   } = ctx;
@@ -412,45 +414,33 @@ function buildModel(ctx) {
   }
   */
 
-  // Day-off balance constraints (+/-3 for non-R3s)
-  let actualPossibleDayoffs = 0;
-  for (let i = 0; i < days.length; i++) {
-    const currentDay = days[i];
-    const nextDay = days[i + 1];
-    if (nextDay && isWorkday(currentDay, holidaySet) && isWorkday(nextDay, holidaySet)) {
-      actualPossibleDayoffs += 2;
-    }
-  }
-  const totalDayoffs = actualPossibleDayoffs; // Use this instead of weekdayCount * 2
-  const eligibleForDayoffCap = employees.filter(p => p.klass !== 'R3');
-  const avgDayoffs = totalDayoffs / Math.max(1, eligibleForDayoffCap.length);
-  const minDayoffs = Math.max(0, Math.floor(avgDayoffs) - 3);
-  const maxDayoffs = Math.ceil(avgDayoffs) + 3;
-
-  for (const person of eligibleForDayoffCap) {
-    const carryover = person.carryover.off || 0;
-    model.constraints[`dayoff_cap_${person.id}`] = {
-      min: minDayoffs - carryover,
-      max: maxDayoffs - carryover,
-    };
-  }
-
-  // R3 day-off balancing (+/-1 within R3 group)
   const r3s = employees.filter(p => p.klass === 'R3');
-  if (r3s.length > 1) {
-    model.variables['min_r3_dayoffs'] = { penalty: 0 };
-    model.variables['max_r3_dayoffs'] = { penalty: 0 };
-    model.constraints['r3_dayoff_diff'] = { max: 1 };
-    model.variables['max_r3_dayoffs']['r3_dayoff_diff'] = 1;
-    model.variables['min_r3_dayoffs']['r3_dayoff_diff'] = -1;
 
-    for (const person of r3s) {
-      const carryoverOff = person.carryover.off || 0;
-      model.constraints[`r3_dayoff_link_min_${person.id}`] = { min: -carryoverOff };
-      model.constraints[`r3_dayoff_link_max_${person.id}`] = { max: -carryoverOff };
-      model.variables['min_r3_dayoffs'][`r3_dayoff_link_min_${person.id}`] = -1;
-      model.variables['max_r3_dayoffs'][`r3_dayoff_link_max_${person.id}`] = -1;
+  if (enforceDayoffBalance) {
+    // Day-off balance constraints (+/-2 for all residents)
+    let actualPossibleDayoffs = 0;
+    for (let i = 0; i < days.length; i++) {
+      const currentDay = days[i];
+      const nextDay = days[i + 1];
+      if (nextDay && isWorkday(currentDay, holidaySet) && isWorkday(nextDay, holidaySet)) {
+        actualPossibleDayoffs += 2;
+      }
     }
+    const totalDayoffs = actualPossibleDayoffs;
+    const eligibleForDayoffCap = employees; // Apply to all employees
+    const avgDayoffs = totalDayoffs / Math.max(1, eligibleForDayoffCap.length);
+    const minDayoffs = Math.max(0, Math.floor(avgDayoffs) - 2); // Changed to 2
+    const maxDayoffs = Math.ceil(avgDayoffs) + 2; // Changed to 2
+
+    for (const person of eligibleForDayoffCap) {
+      const carryover = person.carryover.off || 0;
+      model.constraints[`dayoff_cap_${person.id}`] = {
+        min: minDayoffs - carryover,
+        max: maxDayoffs - carryover,
+      };
+    }
+
+    // R3-specific relative day-off balancing is now removed.
   }
 
   // R3 non-pediatric pair balancing (+/-1)
@@ -468,7 +458,6 @@ function buildModel(ctx) {
 
   // R3 주 1회 당직 제약
   if (enforceR3WeeklyCap) {
-    const r3s = employees.filter(p => p.klass === 'R3');
     for (const person of r3s) {
       for (const wk of weekKeys) {
         const constraintName = `r3_weekly_cap_${person.id}_${wk}`;
