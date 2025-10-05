@@ -207,7 +207,9 @@ async function onGenerate() {
       const prior = getPriorDayDutyFromUI();
 
       const runSchedule = (mode, seed, r3Cap = false, r1Cap = false, hourCap = 'strict') => {
-        const randomSeed = Number.isFinite(seed) ? seed : nextRandomSeed();
+        // Always generate a new random seed for each run to explore different optimal solutions.
+        const randomSeed = nextRandomSeed();
+        console.log(`[SCHEDULER] Using random seed: ${randomSeed}`);
         const args = { startDate, endDate, weeks, weekMode, employees, holidays, dutyUnavailableByName: Object.fromEntries(dutyUnavailable), dayoffWishByName: Object.fromEntries(dayoffWish), vacationDaysByName: Object.fromEntries(vacations), priorDayDuty: prior, optimization, weekdaySlots, weekendSlots: 2, timeBudgetMs: budgetMs, roleHardcapMode: mode, prevStats: prev, randomSeed, enforceR3WeeklyCap: r3Cap, enforceR1WeeklyCap: r1Cap, weeklyHourCapMode: hourCap };
         return generateSchedule(args);
       };

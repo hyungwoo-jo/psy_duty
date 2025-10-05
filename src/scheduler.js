@@ -382,25 +382,35 @@ function buildModel(ctx) {
     }
   }
 
+  /*
   // Total weekly hour constraints (duty + regular)
+  // The logic is: Total Hours <= cap
+  // Total Hours = Base Regular Hours + Extra Hours
+  // Base Regular Hours = (numWeekdaysInWeek - numVacationDays) * REGULAR_HOURS
+  // Extra Hours = (Sum of Duty Hours) - (Sum of Saved Regular Hours from Day-offs)
+  // So, we model `Extra Hours` on the LHS of the constraint.
+  // Extra Hours <= cap - Base Regular Hours
   for (const person of employees) {
     for (const wk of weekKeys) {
-            let cap;
-            if (weeklyHourCapMode === 'strict') {
-              // Strict mode: 72h, but 80h if there's a vacationer in the class
-              cap = vacationKlasses.has(person.klass) ? 80 : 72;
-            } else {
-              // Relaxed mode (stage 3): 80h for everyone
-              cap = 80;
-            }
-            
-            const numWeekdays = weekdaysInWeek.get(wk) || 0;
-            const numVacationDays = vacationWeekdays.get(person.id)?.get(wk) || 0;
-            const effectiveCap = cap - (numWeekdays * REGULAR_HOURS) + (numVacationDays * REGULAR_HOURS);
+      let cap;
+      if (weeklyHourCapMode === 'strict') {
+        cap = vacationKlasses.has(person.klass) ? 80 : 72;
+      } else {
+        cap = 80;
+      }
+
+      const numWeekdays = weekdaysInWeek.get(wk) || 0;
+      const numVacationDays = vacationWeekdays.get(person.id)?.get(wk) || 0;
       
-            const constraintName = `total_week_hours_${person.id}_${wk}`;
-            model.constraints[constraintName] = { max: effectiveCap };    }
+      const baseRegularHours = (numWeekdays - numVacationDays) * REGULAR_HOURS;
+      const rhs = cap - baseRegularHours;
+
+      const constraintName = `total_week_hours_${person.id}_${wk}`;
+      model.constraints[constraintName] = { max: rhs };
+      console.log(`[ILP MODEL] Constraint Added: Person=${person.name}, Week=${wk}, MaxExtraHours=${rhs.toFixed(1)} (Cap=${cap}, BaseRegular=${baseRegularHours.toFixed(1)})`);
+    }
   }
+  */
 
   // Day-off balance constraints (+/-3 for non-R3s)
   let actualPossibleDayoffs = 0;
@@ -535,16 +545,34 @@ function buildModel(ctx) {
         model.variables[varName] = {
           [slotConstraint]: 1,
           [personDayConstraint(person.id, dayIdx)]: 1,
+          // Add a small random penalty to break ties between equally optimal solutions
+          penalty: (random() * 0.001),
         };
-        // Add to total week hours constraint
-        // The `effectiveCap` on the RHS pre-subtracts all regular hours.
-        // The coefficient here represents the *additional* hours a duty adds compared to that baseline.
-        let hourCoefficient = isWeekday ? DUTY_HOURS.weekday : DUTY_HOURS.weekend;
-        // If the duty generates a day-off, it saves 8 regular hours on the next day.
-        if (nextDayIsWorkday) {
-          hourCoefficient -= REGULAR_HOURS;
+        /*
+        // Add to total week hours constraint.
+        // The LHS accumulates "extra hours" on top of the base regular work week.
+        // A duty adds its own hours, but also grants a day-off which *reduces* total hours.
+        
+        // 1. Add duty hours to the current week's extra hours.
+        const dutyHour = isWeekday ? DUTY_HOURS.weekday : DUTY_HOURS.weekend;
+        const weekHourConstraintName = `total_week_hours_${person.id}_${weekKey}`;
+        if (!model.variables[varName][weekHourConstraintName]) {
+          model.variables[varName][weekHourConstraintName] = 0;
         }
-        model.variables[varName][`total_week_hours_${person.id}_${weekKey}`] = hourCoefficient;
+        model.variables[varName][weekHourConstraintName] += dutyHour;
+
+        // 2. Subtract regular hours for the resulting day-off from the appropriate week's extra hours.
+        const nextDay = addDays(date, 1);
+        const nextDayIsWorkday = (dayIdx < days.length - 1) && isWorkday(nextDay, holidaySet);
+        if (nextDayIsWorkday) {
+          const nextDayWeekKey = weekKeyByMode(nextDay, start, weekMode);
+          const nextWeekHourConstraintName = `total_week_hours_${person.id}_${nextDayWeekKey}`;
+          if (!model.variables[varName][nextWeekHourConstraintName]) {
+            model.variables[varName][nextWeekHourConstraintName] = 0;
+          }
+          model.variables[varName][nextWeekHourConstraintName] -= REGULAR_HOURS;
+        }
+        */
 
         // R3 주 1회 당직 제약 변수 추가
         if (enforceR3WeeklyCap && person.klass === 'R3') {
@@ -847,17 +875,23 @@ function rebuildLedger({ ctx, schedule }) {
       if (hoursForThisDay > 0) {
         p.weeklyHours[weekKey] = (p.weeklyHours[weekKey] || 0) + hoursForThisDay;
       }
-      
-      // Recalculate stats separately for clarity
-      if (isOnDuty) {
-        p.dutyCount += 1;
-        p._dutyHoursAccum += workday ? DUTY_HOURS.weekday : DUTY_HOURS.weekend;
-        if (workday) p.weekdayDutyCount += 1; else p.weekendDutyCount += 1;
-        const slot = (cell.duties || []).findIndex(d => d.id === p.id);
-        if (slot === 0) p._byung += 1; else if (slot === 1) p._eung += 1;
-      }
+      console.log(`[STAT CALC] Day=${key}, Person=${p.name}, Hours=${hoursForThisDay.toFixed(1)}, OnDuty=${isOnDuty}, DayOff=${isDayOff}, Vacation=${p.vacationDays.has(key)}`);
     }
   }
+
+  // Step 3: Recalculate simple stats after all hours are calculated
+  for (const cell of schedule) {
+      const workday = isWorkday(cell.date, holidaySet);
+      (cell.duties || []).forEach((duty, slot) => {
+          const p = byId.get(duty?.id);
+          if (!p) return;
+          p.dutyCount += 1;
+          p._dutyHoursAccum += workday ? (DUTY_HOURS.weekday + REGULAR_HOURS) : DUTY_HOURS.weekend;
+          if (workday) p.weekdayDutyCount += 1; else p.weekendDutyCount += 1;
+          if (slot === 0) p._byung += 1; else if (slot === 1) p._eung += 1;
+      });
+  }
+
   return people;
 }
 function buildWarnings({ people }) {
