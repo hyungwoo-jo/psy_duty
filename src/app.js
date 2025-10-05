@@ -244,7 +244,6 @@ async function onGenerate() {
         }
 
         try {
-          appendMessage(`${attemptNum}/${MAX_ATTEMPTS}번째 생성 시도...`);
           let currentResult = null;
           
           // --- Constraint Dropping Architecture ---
@@ -1209,11 +1208,23 @@ function renderWeeklyHours(result) {
         const td = document.createElement('td');
         td.textContent = String(val);
         if (idx >= 1) td.classList.add('num');
-        // 주별 시간 셀 스타일링: <72 무색, ==72 약하게, >72 하이라이트
         if (idx >= 1 && idx <= weekKeys.length) {
           const v = values[idx - 1] || 0;
-          if (v > 72 + 1e-9) td.classList.add('wk-over');
-          else if (Math.abs(v - 72) <= 1e-9) td.classList.add('wk-soft');
+          if (v >= 80) {
+            td.classList.add('hours-tier-7');
+          } else if (v >= 75) {
+            td.classList.add('hours-tier-6');
+          } else if (v >= 72) {
+            td.classList.add('hours-tier-5');
+          } else if (v >= 60) {
+            td.classList.add('hours-tier-4');
+          } else if (v >= 50) {
+            td.classList.add('hours-tier-3');
+          } else if (v >= 40) {
+            td.classList.add('hours-tier-2');
+          } else if (v > 0) {
+            td.classList.add('hours-tier-1');
+          }
         }
         tr.appendChild(td);
       });
@@ -1317,10 +1328,7 @@ function renderCarryoverStats(result, opts = {}) {
   const showDiagnostics = isDiagnosticsEnabled();
   if (showDiagnostics) {
     const diag = document.createElement('pre');
-    diag.style.background = '#111';
-    diag.style.color = '#ffa';
-    diag.style.padding = '8px';
-    diag.style.marginTop = '8px';
+    diag.className = 'diagnostics-output';
     diag.textContent = `DIAGNOSTIC (Carry-over):\nEungCount Map: ${JSON.stringify([...eungCount.entries()])}`;
     wrap.appendChild(diag);
   }
@@ -1582,10 +1590,7 @@ function renderPersonalStats(result) {
   const showDiagnostics = isDiagnosticsEnabled();
   if (showDiagnostics) {
     const diag = document.createElement('pre');
-    diag.style.background = '#111';
-    diag.style.color = '#afa';
-    diag.style.padding = '8px';
-    diag.style.marginTop = '8px';
+    diag.className = 'diagnostics-output';
     diag.textContent = `DIAGNOSTIC (Personal Stats):\nEungCount Map: ${JSON.stringify([...eungCount.entries()])}`;
     wrap.appendChild(diag);
   }

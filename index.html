@@ -26,7 +26,7 @@
       </div>
       <div class="field">
         <label for="retry-attempts">재시도 횟수</label>
-        <input id="retry-attempts" type="number" min="1" max="50" value="20" />
+        <input id="retry-attempts" type="number" min="1" max="50" value="50" />
       </div>
       
       <!-- 당직 인원 고정: 병당 1, 응당 1 (UI 옵션 제거) -->
@@ -93,33 +93,39 @@ R4 이동인"></textarea>
       </div>
 
       <div class="field field--full">
-        <fieldset>
-          <legend>ILP 규칙 설정</legend>
-          <div class="checkbox-group">
-            <div>
-              <input type="checkbox" id="toggle-r1-cap" checked />
-              <label for="toggle-r1-cap">R1 주간 당직 제한 (2회)</label>
+        <details>
+          <summary>ILP 규칙 설정</summary>
+          <fieldset>
+            <div class="checkbox-group">
+              <div>
+                <input type="checkbox" id="toggle-r1-cap" checked />
+                <label for="toggle-r1-cap">R1 주간 당직 제한 (2회)</label>
+                <small>(같은 연차 휴가자 없을 시 자동 적용)</small>
+              </div>
+              <div>
+                <input type="checkbox" id="toggle-r3-cap" checked />
+                <label for="toggle-r3-cap">R3 주간 당직 제한 (1회)</label>
+                <small>(같은 연차 휴가자 없을 시 자동 적용)</small>
+              </div>
             </div>
-            <div>
-              <input type="checkbox" id="toggle-r3-cap" checked />
-              <label for="toggle-r3-cap">R3 주간 당직 제한 (1회)</label>
-            </div>
-          </div>
-        </fieldset>
+          </fieldset>
+        </details>
       </div>
 
       <div class="field field--full">
-        <fieldset>
-          <legend>점수 가중치 설정</legend>
-          <div class="checkbox-group">
-            <div><label for="score-overtime-soft">시간 초과 (72-75h) 점수</label><input type="number" id="score-overtime-soft" value="1" step="0.5" min="0" /></div>
-            <div><label for="score-overtime-hard">고도 시간 초과 (>=75h) 점수</label><input type="number" id="score-overtime-hard" value="2" step="0.5" min="0" /></div>
-            <div><label for="score-dayoff-base">Day-off 기본 점수 (a)</label><input type="number" id="score-dayoff-base" value="0.5" step="0.1" min="0" /></div>
-            <div><label for="score-dayoff-increment">Day-off 추가 점수 (b)</label><input type="number" id="score-dayoff-increment" value="1" step="0.1" min="0" /></div>
-            <div><label for="score-role-base">역할 기본 점수 (a)</label><input type="number" id="score-role-base" value="1" step="0.1" min="0" /></div>
-            <div><label for="score-role-increment">역할 추가 점수 (b)</label><input type="number" id="score-role-increment" value="1" step="0.1" min="0" /></div>
-          </div>
-        </fieldset>
+        <details>
+          <summary>점수 가중치 설정</summary>
+          <fieldset>
+            <div class="checkbox-group">
+              <div><label for="score-overtime-soft">시간 초과 (72-75h) 점수</label><input type="number" id="score-overtime-soft" value="1" step="0.5" min="0" /></div>
+              <div><label for="score-overtime-hard">고도 시간 초과 (>=75h) 점수</label><input type="number" id="score-overtime-hard" value="2" step="0.5" min="0" /></div>
+              <div><label for="score-dayoff-base">Day-off 기본 점수 (a)</label><input type="number" id="score-dayoff-base" value="0.5" step="0.1" min="0" /></div>
+              <div><label for="score-dayoff-increment">Day-off 추가 점수 (b)</label><input type="number" id="score-dayoff-increment" value="1" step="0.1" min="0" /></div>
+              <div><label for="score-role-base">역할 기본 점수 (a)</label><input type="number" id="score-role-base" value="1" step="0.1" min="0" /></div>
+              <div><label for="score-role-increment">역할 추가 점수 (b)</label><input type="number" id="score-role-increment" value="1" step="0.1" min="0" /></div>
+            </div>
+          </fieldset>
+        </details>
       </div>
       <div class="field field--full">
         <label>전일 당직(시작일 전날): 월요일 시작 시 전날 일요일 당직자를 지정하세요</label>
