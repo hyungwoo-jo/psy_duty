@@ -3,6 +3,7 @@ import { fmtDate, addDays, isWeekday, rangeDays, weekKey } from './time.js';
 
 const startInput = document.querySelector('#start-date');
 const weeksInput = document.querySelector('#weeks');
+const retryAttemptsInput = document.querySelector('#retry-attempts');
 const endInput = document.querySelector('#end-date');
 const employeesInput = document.querySelector('#employees');
 const generateBtn = document.querySelector('#generate');
@@ -250,7 +251,12 @@ async function onGenerate() {
       };
 
       // --- Multi-run and evaluation logic ---
-      const MAX_ATTEMPTS = 20;
+      const getRetryCount = () => {
+        const value = Number(retryAttemptsInput?.value || 20);
+        if (!Number.isFinite(value) || value <= 0) return 20;
+        return Math.min(50, Math.floor(value)); // Cap at 50
+      };
+      const MAX_ATTEMPTS = getRetryCount();
       const results = [];
       appendMessage(`총 ${MAX_ATTEMPTS}번의 생성을 시도하여 72시간 초과가 없는 최적의 해를 찾습니다...`);
 
