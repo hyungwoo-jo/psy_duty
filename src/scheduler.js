@@ -473,7 +473,17 @@ function buildModel(ctx) {
       for (const wk of weekKeys) {
         const constraintName = `r1_weekly_cap_${person.id}_${wk}`;
                     const cap = unavoidableWeekKeys.has(wk) ? 3 : 2;
-                    model.constraints[constraintName] = { max: cap };      }
+                    model.constraints[constraintName] = { max: cap };
+      }
+    }
+  }
+
+  // R2 주 최소 1회 당직 제약
+  const r2s = employees.filter(p => p.klass === 'R2');
+  for (const person of r2s) {
+    for (const wk of weekKeys) {
+      const constraintName = `r2_weekly_min_${person.id}_${wk}`;
+      model.constraints[constraintName] = { min: 1 };
     }
   }
 
@@ -574,6 +584,14 @@ function buildModel(ctx) {
         // R1 주 2회 당직 제약 변수 추가
         if (enforceR1WeeklyCap && person.klass === 'R1') {
           const constraintName = `r1_weekly_cap_${person.id}_${weekKey}`;
+          if (model.constraints[constraintName]) {
+            model.variables[varName][constraintName] = 1;
+          }
+        }
+
+        // R2 주 최소 1회 당직 제약 변수 추가
+        if (person.klass === 'R2') {
+          const constraintName = `r2_weekly_min_${person.id}_${weekKey}`;
           if (model.constraints[constraintName]) {
             model.variables[varName][constraintName] = 1;
           }

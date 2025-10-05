@@ -1220,7 +1220,7 @@ function renderWeeklyHours(result) {
             td.classList.add('hours-tier-4');
           } else if (v >= 50) {
             td.classList.add('hours-tier-3');
-          } else if (v >= 40) {
+          } else if (v > 40) {
             td.classList.add('hours-tier-2');
           } else if (v > 0) {
             td.classList.add('hours-tier-1');
