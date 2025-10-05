@@ -206,57 +206,7 @@ async function onGenerate() {
       const vacations = parseVacationRanges(vacationsInput.value);
       const prior = getPriorDayDutyFromUI();
 
-      const runSchedule = (mode, seed, r3Cap = false, r1Cap = false, hourCap = 'strict') => {
-        // Always generate a new random seed for each run to explore different optimal solutions.
-        const randomSeed = nextRandomSeed();
-        console.log(`[SCHEDULER] Using random seed: ${randomSeed}`);
-        const args = { startDate, endDate, weeks, weekMode, employees, holidays, dutyUnavailableByName: Object.fromEntries(dutyUnavailable), dayoffWishByName: Object.fromEntries(dayoffWish), vacationDaysByName: Object.fromEntries(vacations), priorDayDuty: prior, optimization, weekdaySlots, weekendSlots: 2, timeBudgetMs: budgetMs, roleHardcapMode: mode, prevStats: prev, randomSeed, enforceR3WeeklyCap: r3Cap, enforceR1WeeklyCap: r1Cap, weeklyHourCapMode: hourCap };
-        return generateSchedule(args);
-      };
-
-      const needsUnderfillFix = (result) => result.schedule.some((day) => (day.duties?.length || 0) < 2 || day.underfilled);
-
-      const calculateScore = (result, prev) => {
-        let score = 0;
-        const { byungCount, eungCount } = computeRoleAndOffCounts(result);
-        const empById = new Map(result.employees.map((e) => [e.id, e]));
-
-        for (const klass of ['R1', 'R2']) {
-          const peopleInClass = result.stats.filter(s => (empById.get(s.id)?.klass || '기타') === klass);
-          if (!peopleInClass.length) continue;
-
-          for (const role of [{ key: 'byung', countMap: byungCount }, { key: 'eung', countMap: eungCount }]) {
-            const prevList = (prev.entriesByClassRole.get(klass)?.[role.key]) || [];
-            const prevByName = new Map(prevList.map((e) => [e.name, Number(e.delta) || 0]));
-            
-            const finalCounts = peopleInClass.map((p) => ({
-              id: p.id,
-              name: p.name,
-              count: (Number(role.countMap.get(p.id) || 0)) + (prevByName.get(p.name) || 0),
-            }));
-
-            const { deltas: finalDeltas } = computeCarryoverDeltas(finalCounts);
-            
-            for (const d of finalDeltas) {
-              if (Math.abs(d.delta) >= 2) {
-                score += 10; // Heavy penalty for ±2 deviations
-              }
-            }
-          }
-        }
-
-        const r3NonPediatric = result.employees.filter(p => p.klass === 'R3' && !p.pediatric);
-        if (r3NonPediatric.length === 2) {
-          const p1 = r3NonPediatric[0];
-          const p2 = r3NonPediatric[1];
-          score += Math.abs((byungCount.get(p1.id) || 0) - (byungCount.get(p2.id) || 0));
-          score += Math.abs((eungCount.get(p1.id) || 0) - (eungCount.get(p2.id) || 0));
-        }
-        
-        score += countHardExceed(result, 75) * 100; // Very heavy penalty
-        return score;
-      };
-
+      // --- Logic for initial caps, needs to be inside onGenerate to access employees, vacations etc. ---
       const r1s = employees.filter(e => e.klass === 'R1');
       let anyR1HasVacation = false;
       if (r1s.length > 0) {
@@ -264,7 +214,7 @@ async function onGenerate() {
           for (const r1 of r1s) {
               const r1Vacations = vacations.get(r1.name) || new Set();
               for (const vacDay of r1Vacations) {
-                  if (scheduleDays.has(vacDay)) {
+                  if (scheduleDays.includes(vacDay)) {
                       anyR1HasVacation = true;
                       break;
                   }
@@ -280,7 +230,7 @@ async function onGenerate() {
           for (const r3 of r3s) {
               const r3Vacations = vacations.get(r3.name) || new Set();
               for (const vacDay of r3Vacations) {
-                  if (scheduleDays.has(vacDay)) {
+                  if (scheduleDays.includes(vacDay)) {
                       anyR3HasVacation = true;
                       break;
                   }
@@ -289,66 +239,111 @@ async function onGenerate() {
           }
       }
 
-      let bestResult = null;
       const initialR1Cap = !anyR1HasVacation;
       const initialR3Cap = !anyR3HasVacation;
 
-      // --- Constraint Dropping Architecture ---
+      const runSchedule = (mode, seed, r3Cap = false, r1Cap = false, hourCap = 'strict') => {
+        const randomSeed = Number.isFinite(seed) ? seed : nextRandomSeed();
+        console.log(`[SCHEDULER] Using random seed: ${randomSeed}`);
+        const args = { startDate, endDate, weeks, weekMode, employees, holidays, dutyUnavailableByName: Object.fromEntries(dutyUnavailable), dayoffWishByName: Object.fromEntries(dayoffWish), vacationDaysByName: Object.fromEntries(vacations), priorDayDuty: prior, optimization, weekdaySlots, weekendSlots: 2, timeBudgetMs: budgetMs, roleHardcapMode: mode, prevStats: prev, randomSeed, enforceR3WeeklyCap: r3Cap, enforceR1WeeklyCap: r1Cap, weeklyHourCapMode: hourCap };
+        return generateSchedule(args);
+      };
 
-      // Attempt 1: All constraints are applied
-      try {
-        appendMessage('1단계 시도: 모든 규칙을 적용하여 생성합니다...');
-        bestResult = runSchedule(roleHardcapMode, undefined, initialR3Cap, initialR1Cap, 'strict');
-        appendMessage('성공: 모든 규칙을 만족하는 스케줄을 찾았습니다.');
-      } catch (e) {
-        console.warn('Constraint dropping step 1 failed. All constraints were applied.', e);
-        appendMessage('1단계 실패. 2단계: R1 주간 당직 제한을 완화하여 재시도합니다...');
-        
-        // Attempt 2: Drop R1 weekly cap
+      // --- Multi-run and evaluation logic ---
+      const MAX_ATTEMPTS = 20;
+      const results = [];
+      appendMessage(`총 ${MAX_ATTEMPTS}번의 생성을 시도하여 72시간 초과가 없는 최적의 해를 찾습니다...`);
+
+      const runAttempt = async (attemptNum) => {
+        if (attemptNum > MAX_ATTEMPTS) {
+          evaluateAndRender(results);
+          return;
+        }
+
         try {
-          bestResult = runSchedule(roleHardcapMode, undefined, initialR3Cap, false, 'strict'); // enforceR1WeeklyCap = false
-          appendMessage('R1 주간 당직 2회 제한 규칙을 포기했습니다 😥');
-        } catch (e2) {
-          console.warn('Constraint dropping step 2 failed. R1 weekly cap was dropped.', e2);
-          appendMessage('2단계 실패. 3단계: 주간 근무 시간 제한을 완화하여 재시도합니다...');
-
-          // Attempt 3: Drop R1 cap AND weekly hour cap
+          appendMessage(`${attemptNum}/${MAX_ATTEMPTS}번째 생성 시도...`);
+          let currentResult = null;
+          
           try {
-            bestResult = runSchedule(roleHardcapMode, undefined, initialR3Cap, false, 'none'); // weeklyHourCapMode = 'none'
-            appendMessage('기본 주간 근무 시간(72시간) 제한을 완화했습니다 (최대 80시간 적용) 😥');
-          } catch (e3) {
-            console.error('Constraint dropping step 3 failed. All constraints were relaxed.', e3);
-            appendMessage('최종 실패: 모든 제약을 완화해도 해를 찾을 수 없습니다. 입력값을 확인해주세요.');
-            throw e3; // Re-throw the final error to be caught by the outer handler
+            currentResult = await runSchedule(roleHardcapMode, undefined, initialR3Cap, initialR1Cap, 'strict');
+          } catch (e) {
+            try {
+              currentResult = await runSchedule(roleHardcapMode, undefined, initialR3Cap, false, 'strict');
+            } catch (e2) {
+              currentResult = await runSchedule(roleHardcapMode, undefined, initialR3Cap, false, 'none');
+            }
+          }
+          results.push(currentResult);
+        } catch (err) {
+          const detailedError = `오류 발생: ${err.message}\n\nStack Trace:\n${err.stack}`;
+          console.error(err);
+          messages.innerHTML = '';
+          appendMessage(detailedError.replace(/\n/g, '<br>'));
+          setLoading(false);
+          disableActions(false);
+          return; // Stop the loop on first error
+        }
+
+        setTimeout(() => runAttempt(attemptNum + 1), 50);
+      };
+
+      const evaluateAndRender = (finalResults) => {
+        if (finalResults.length === 0) {
+          appendMessage("모든 스케줄 생성 시도에 실패했습니다. 입력값을 확인해주세요.");
+          setLoading(false);
+          disableActions(false);
+          return;
+        }
+
+        appendMessage('생성된 스케줄들을 평가하여 최적의 안을 선택합니다...');
+        
+        const countOvertimeWeeks = (result, limit) => {
+          if (!result || !result.stats) return Infinity;
+          let count = 0;
+          for (const person of result.stats) {
+            for (const week in person.weeklyHours) {
+              if (person.weeklyHours[week] > limit + 1e-9) {
+                count++;
+              }
+            }
+          }
+          return count;
+        };
+
+        let bestResult = null;
+        let minOvertimeCount = Infinity;
+
+        for (const result of finalResults) {
+          const overtimeCount = countOvertimeWeeks(result, 72);
+          if (overtimeCount === 0) {
+            bestResult = result;
+            minOvertimeCount = 0;
+            break;
+          }
+          if (overtimeCount < minOvertimeCount) {
+            minOvertimeCount = overtimeCount;
+            bestResult = result;
           }
         }
-      }
+        
+        if (minOvertimeCount === 0) {
+            appendMessage(`성공! ${finalResults.length}번의 시도 중 72시간 초과가 없는 최적의 스케줄을 찾았습니다!`);
+        } else {
+            appendMessage(`경고: 72시간 초과가 없는 스케줄을 찾지 못했습니다. ${finalResults.length}개의 후보 중 초과가 가장 적은 스케줄을 선택합니다 (최소 초과 ${minOvertimeCount}건).`);
+        }
 
-      lastResult = bestResult;
-      renderSummary(bestResult);
-      renderReport(bestResult, { previous: prev });
-      renderRoster(bestResult);
-      if (exportXlsxBtn) exportXlsxBtn.disabled = false;
-      if (exportIcsBtn) exportIcsBtn.disabled = false;
+        lastResult = bestResult;
+        renderSummary(bestResult);
+        renderReport(bestResult, { previous: prev });
+        renderRoster(bestResult);
+        if (exportXlsxBtn) exportXlsxBtn.disabled = false;
+        if (exportIcsBtn) exportIcsBtn.disabled = false;
 
-      const finalSoftExceeds = countSoftExceed(bestResult, 72);
-      if (finalSoftExceeds > 0) {
-        const warnMsg = `주의: 일부 주의 72h 초과가 해소되지 않았습니다 (셀 ${finalSoftExceeds}개). 설정을 조정하거나 인원을 늘려주세요.`;
-        appendMessage(warnMsg);
-      }
+        setLoading(false);
+        disableActions(false);
+      };
 
-      const names = new Set(employees.map((e) => e.name));
-      const unknownUnavail = [...dutyUnavailable.keys()].filter((n) => !names.has(n));
-      const unknownDayoff = [...dayoffWish.keys()].filter((n) => !names.has(n));
-      const unknownVacs = [...vacations.keys()].filter((n) => !names.has(n));
-      const priorNames = [prior.byung, prior.eung].filter(Boolean);
-      const unknownPrior = priorNames.filter((n) => !names.has(n));
-      const notes = [];
-      if (unknownUnavail.length) notes.push(`당직 불가일 이름 불일치: ${unknownUnavail.join(', ')}`);
-      if (unknownDayoff.length) notes.push(`Day-off 희망일 이름 불일치: ${unknownDayoff.join(', ')}`);
-      if (unknownVacs.length) notes.push(`휴가 이름 불일치: ${unknownVacs.join(', ')}`);
-      if (unknownPrior.length) notes.push(`전일 당직 이름 불일치: ${unknownPrior.join(', ')}`);
-      notes.forEach((msg) => appendMessage(msg));
+      runAttempt(1);
 
     } catch (err) {
       console.error(err);
@@ -356,8 +351,7 @@ async function onGenerate() {
       if (exportXlsxBtn) exportXlsxBtn.disabled = true;
       if (exportIcsBtn) exportIcsBtn.disabled = true;
     } finally {
-      setLoading(false);
-      disableActions(false);
+      // setLoading and disableActions are now called inside evaluateAndRender or the catch block
     }
   } catch (err) {
     console.error(err);

@@ -1,20 +1,34 @@
 let solverPromise = null;
 
-function buildScriptUrl() {
-  return new URL('../../vendor/javascript-lp-solver/solver.min.js', import.meta.url).href;
+function buildScriptUrl(forceReload = false) {
+  const base = new URL('../../vendor/javascript-lp-solver/solver.min.js', import.meta.url).href;
+  if (forceReload) {
+    return `${base}?_t=${Date.now()}`;
+  }
+  return base;
 }
 
-export function ensureSolver() {
+export function ensureSolver({ forceReload = false } = {}) {
   if (typeof window === 'undefined') {
     throw new Error('ILP solver는 브라우저 환경에서만 사용할 수 있습니다.');
   }
+
+  if (forceReload) {
+    solverPromise = null;
+    // For this solver, it attaches itself to `window.solver`.
+    // Setting it to undefined is enough before reloading.
+    window.solver = undefined; 
+  }
+
   if (window.solver) {
     return Promise.resolve(window.solver);
   }
+
   if (solverPromise) {
     return solverPromise;
   }
-  const src = buildScriptUrl();
+
+  const src = buildScriptUrl(forceReload);
   solverPromise = new Promise((resolve, reject) => {
     const script = document.createElement('script');
     script.src = src;
