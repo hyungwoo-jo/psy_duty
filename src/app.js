@@ -27,6 +27,12 @@ const icsPreview = document.querySelector('#ics-preview');
 const hardcapToggle = document.querySelector('#role-hardcap-toggle');
 const toggleR1Cap = document.querySelector('#toggle-r1-cap');
 const toggleR3Cap = document.querySelector('#toggle-r3-cap');
+const scoreOvertimeSoft = document.querySelector('#score-overtime-soft');
+const scoreOvertimeHard = document.querySelector('#score-overtime-hard');
+const scoreDayoffBase = document.querySelector('#score-dayoff-base');
+const scoreDayoffIncrement = document.querySelector('#score-dayoff-increment');
+const scoreRoleBase = document.querySelector('#score-role-base');
+const scoreRoleIncrement = document.querySelector('#score-role-increment');
 let roleHardcapMode = hardcapToggle?.dataset.mode === 'relaxed' ? 'relaxed' : 'strict';
 // 최적화 선택 UI 제거: 기본 strong
 // 주 계산 모드 옵션 제거: 달력 기준(월–일) 고정
@@ -225,7 +231,7 @@ async function onGenerate() {
       const getRetryCount = () => {
         const value = Number(retryAttemptsInput?.value || 20);
         if (!Number.isFinite(value) || value <= 0) return 20;
-        return Math.min(50, Math.floor(value)); // Cap at 50
+        return Math.floor(value);
       };
       const MAX_ATTEMPTS = getRetryCount();
       const results = [];
