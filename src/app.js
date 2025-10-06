@@ -39,14 +39,14 @@ let roleHardcapMode = hardcapToggle?.dataset.mode === 'relaxed' ? 'relaxed' : 's
 // 주 계산 모드 옵션 제거: 달력 기준(월–일) 고정
 // 당직 슬롯 고정: 병당 1, 응당 1
 
-// 기본값: 다음 월요일
-setDefaultStartMonday();
+// 기본값: 다음 월요일 (DOMContentLoaded 이후 안전하게 지정)
+runOnReady(setDefaultStartMonday);
 
-generateBtn.addEventListener('click', onGenerate);
+generateBtn?.addEventListener('click', onGenerate);
 exportXlsxBtn?.addEventListener('click', onExportXlsx);
 exportIcsBtn?.addEventListener('click', onExportIcs);
 // 직원 목록 변경 시 보정 UI 갱신
-employeesInput.addEventListener('input', debounce(renderPreviousStatsUI, 250));
+employeesInput?.addEventListener('input', debounce(renderPreviousStatsUI, 250));
 runOnReady(renderPreviousStatsUI);
 runOnReady(updateHardcapToggleLabel);
 runOnReady(() => {
@@ -57,9 +57,9 @@ runOnReady(() => {
   } catch {}
 });
 ['change','input'].forEach((ev) => {
-  startInput.addEventListener(ev, updateIcsPreview);
-  endInput.addEventListener(ev, updateIcsPreview);
-  weeksInput.addEventListener(ev, updateIcsPreview);
+  startInput?.addEventListener(ev, updateIcsPreview);
+  endInput?.addEventListener(ev, updateIcsPreview);
+  weeksInput?.addEventListener(ev, updateIcsPreview);
   icsVersionInput?.addEventListener(ev, updateIcsPreview);
 });
 hardcapToggle?.addEventListener('click', () => {
@@ -143,24 +143,22 @@ function runOnReady(fn) {
 }
 
 function setDefaultStartMonday() {
+  if (!startInput) return;
   // 오늘 기준 "다음달의 첫 월요일"로 설정
   const today = new Date();
   const firstOfNextMonth = new Date(today.getFullYear(), today.getMonth() + 1, 1);
-  // 안전하게 while 루프로 확정(타임존/수식 혼동 방지)
   const firstMonday = new Date(firstOfNextMonth);
   firstMonday.setHours(12, 0, 0, 0); // DST/타임존 영향 최소화
   while (firstMonday.getDay() !== 1) {
     firstMonday.setDate(firstMonday.getDate() + 1);
   }
+  const y = firstMonday.getFullYear();
+  const m = String(firstMonday.getMonth() + 1).padStart(2, '0');
+  const d = String(firstMonday.getDate()).padStart(2, '0');
   try {
     startInput.valueAsDate = firstMonday;
-  } catch {
-    // Fallback to yyyy-mm-dd string
-    const y = firstMonday.getFullYear();
-    const m = String(firstMonday.getMonth() + 1).padStart(2, '0');
-    const d = String(firstMonday.getDate()).padStart(2, '0');
-    startInput.value = `${y}-${m}-${d}`;
-  }
+  } catch {}
+  startInput.value = `${y}-${m}-${d}`;
 }
 
 function parseEmployees(text) {
@@ -328,9 +326,9 @@ async function onGenerate() {
           for (const person of result.stats) {
             const weekly = person.weeklyHours || {};
             for (const week of Object.keys(weekly)) {
-              const raw = weekly[week];
-              if (typeof raw !== 'number' || !Number.isFinite(raw)) continue;
-              const hours = Number(raw.toFixed(1));
+              const num = Number(weekly[week]);
+              if (!Number.isFinite(num)) continue;
+              const hours = Math.round(num * 10) / 10;
               if (hours >= 75 - EPSILON) {
                 score += weights.overtimeHard;
               } else if (hours > 72 + EPSILON) {
@@ -448,9 +446,6 @@ function renderSummary(result) {
 
   const lines = [];
   lines.push(`기간: ${result.startDate} ~ ${endDateOf(result)}`);
-  lines.push(`근무자 수: ${result.employees.length}명`);
-  const back = result.employees.find((e) => e.emergency) || result.schedule.find((d) => d.back)?.back;
-  if (back) lines.push(`응급 back: ${back.name || back}`);
   lines.push(warn ? `주의: ${[...result.warnings].join(' | ') || '검토 필요한 항목 존재'}` : '검증: 제약 내에서 생성됨');
 
   // 상세 비교는 개인별 통계 테이블에서 연차 내 기준으로 확인
@@ -459,7 +454,7 @@ function renderSummary(result) {
   const wkendSlots = result?.config?.weekendSlots ?? 2;
   summary.innerHTML = `
     <div class="legend">시간 산식(개정): 평일 정규 8h(2명), 평일 당직 ${wkdaySlots}명(당일 총 21.5h = 정규 8 + 당직 13.5, 휴게 2.5), 주말/공휴일 당직 ${wkendSlots}명(각 21h). 평일 당직 다음날 정규 면제. 주당 상한: 72h, 개인 총합 ≤ 72×(근무주수)</div>
-    <div class="${warn ? 'warn' : 'ok'}">${lines.join(' / ')}${result?.meta?.elapsedMs ? ` / 최적화 ${result.meta.elapsedMs}ms` : ''}</div>
+    <div class="${warn ? 'warn' : 'ok'}">${lines.join(' / ')}</div>
   `;
 }
 
@@ -1236,22 +1231,52 @@ function renderWeeklyHours(result) {
     table.className = 'report-table';
     const thead = document.createElement('thead');
     const thr = document.createElement('tr');
-    const headers = ['이름', ...weekKeys, '합계'];
-    for (const h of headers) { const th = document.createElement('th'); th.textContent = h; thr.appendChild(th); }
+    // Add new header for Average Weekly Hours
+    const headers = ['이름', ...weekKeys, '합계', '주당 평균 시간'];
+    for (const h of headers) { const th = document.createElement('th'); th.textContent = h; thr.appendChild(th); }  
     thead.appendChild(thr); table.appendChild(thead);
     const tbody = document.createElement('tbody');
     for (const s of groups.get(klass)) {
       const tr = document.createElement('tr');
-      const total = (s.totalHours).toFixed(1);
-      const values = weekKeys.map((wk) => (s.weeklyHours[wk] || 0));
-      const cells = [s.name, ...values.map((v) => v.toFixed(1)), total];
+      const totalNum = Number(s.totalHours);
+      const totalHours = Number.isFinite(totalNum) ? totalNum : 0;
+      const avgBase = result.weeks > 0 ? totalHours / result.weeks : 0;
+      const avgWeeklyHours = Number.isFinite(avgBase) ? avgBase : 0;
+      const values = weekKeys.map((wk) => {
+        const num = Number(s.weeklyHours[wk]);
+        return Number.isFinite(num) ? num : 0;
+      });
+      const displayValues = values.map((v) => (Math.round(v * 10) / 10).toFixed(1));
+      const totalDisplay = (Math.round(totalHours * 10) / 10).toFixed(1);
+      const avgDisplay = (Math.round(avgWeeklyHours * 10) / 10).toFixed(1);
+      const cells = [s.name, ...displayValues, totalDisplay, avgDisplay];
+      
+      // Determine color based on avgWeeklyHours for '주당 평균 시간' column
+      let avgColorClass = '';
+      if (avgWeeklyHours >= 70) {
+        avgColorClass = 'avg-hours-tier-7'; // 70-75
+      } else if (avgWeeklyHours >= 65) {
+        avgColorClass = 'avg-hours-tier-6'; // 65-70
+      } else if (avgWeeklyHours >= 60) {
+        avgColorClass = 'avg-hours-tier-5'; // 60-65
+      } else if (avgWeeklyHours >= 55) {
+        avgColorClass = 'avg-hours-tier-4'; // 55-60
+      } else if (avgWeeklyHours >= 50) {
+        avgColorClass = 'avg-hours-tier-3'; // 50-55
+      } else if (avgWeeklyHours >= 45) {
+        avgColorClass = 'avg-hours-tier-2'; // 45-50
+      } else if (avgWeeklyHours >= 40) {
+        avgColorClass = 'avg-hours-tier-1'; // 40-45
+      }
+
       cells.forEach((val, idx) => {
         const td = document.createElement('td');
         td.textContent = String(val);
         if (idx >= 1) td.classList.add('num');
-        if (idx >= 1 && idx <= weekKeys.length) {
-          const rawHours = values[idx - 1] || 0;
-          const hours = Number(rawHours.toFixed(1));
+        
+        // Apply color to individual weekly cells
+        if (idx >= 1 && idx <= weekKeys.length) { // Individual weekly cells
+          const hours = values[idx - 1] || 0;
           if (hours >= 80) {
             td.classList.add('hours-tier-7');
           } else if (hours >= 75) {
@@ -1262,8 +1287,17 @@ function renderWeeklyHours(result) {
             td.classList.add('hours-tier-4');
           } else if (hours >= 50) {
             td.classList.add('hours-tier-3');
-          } else if (hours > 40) {
+          } else if (hours >= 40) {
             td.classList.add('hours-tier-2');
+          } else if (hours > 0) {
+            td.classList.add('hours-tier-1');
+          }
+        }
+
+        // Apply color to '주당 평균 시간' column only
+        if (idx === cells.length - 1) { // Last column is '주당 평균 시간'
+          if (avgColorClass) {
+            td.classList.add(avgColorClass);
           }
         }
         tr.appendChild(td);
@@ -1598,7 +1632,7 @@ function renderPersonalStats(result) {
     table.className = 'report-table';
     const thead = document.createElement('thead');
     const thr = document.createElement('tr');
-    const hdrs = ['이름', '병당(회)', '응당(회)', '총 당직(회)', 'Day-off', '당직시간(h)', '총근무시간(h)'];
+    const hdrs = ['이름', '병당(회)', '응당(회)', '총 당직(회)', 'Day-off'];
     for (const h of hdrs) { const th = document.createElement('th'); th.textContent = h; thr.appendChild(th); }
     thead.appendChild(thr); table.appendChild(thead);
     const tbody = document.createElement('tbody');
@@ -1612,8 +1646,6 @@ function renderPersonalStats(result) {
         String(eungCount.get(s.id) || 0),
         String((byungCount.get(s.id) || 0) + (eungCount.get(s.id) || 0)),
         String(offW),
-        (s.dutyHours).toFixed(1),
-        (s.totalHours).toFixed(1),
       ];
       cells.forEach((val, idx) => {
         const td = document.createElement('td');

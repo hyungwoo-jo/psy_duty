@@ -53,27 +53,6 @@ header h1 {
   grid-column: 1 / -1;
 }
 
-.field--toggle .toggle-switch {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  font-weight: 500;
-  color: var(--text-color);
-  cursor: pointer;
-}
-
-.field--toggle input[type="checkbox"] {
-  width: auto;
-  height: 1.1rem;
-  margin: 0;
-}
-
-.field--toggle .toggle-switch span {
-  font-weight: 500;
-  color: var(--secondary-text-color);
-  text-transform: lowercase;
-}
-
 label, .legend, summary {
   display: block;
   font-weight: 600;
@@ -187,12 +166,22 @@ button#export-xlsx:hover, button#export-ics:hover, button#load-kr-holidays:hover
 .report-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
 
 /* Tiered hour coloring */
-.report-table td.hours-tier-2 { background-color: #f0f9ff; } /* >40-50h */
+.report-table td.hours-tier-1 { background-color: #fafafa; } /* <=40h */
+.report-table td.hours-tier-2 { background-color: #f0f9ff; } /* 40-50h */
 .report-table td.hours-tier-3 { background-color: #f0fdf4; } /* 50-60h */
 .report-table td.hours-tier-4 { background-color: #fefce8; } /* 60-72h */
 .report-table td.hours-tier-5 { background-color: #fff7ed; } /* 72-75h */
 .report-table td.hours-tier-6 { background-color: #fff1f2; } /* 75-80h */
 .report-table td.hours-tier-7 { background-color: #fee2e2; font-weight: 600; } /* 80h+ */
+
+/* Tiered average weekly hour coloring (red-based) */
+.report-table td.avg-hours-tier-1 { background-color: #fff5f5; } /* 40-45h */
+.report-table td.avg-hours-tier-2 { background-color: #ffebeb; } /* 45-50h */
+.report-table td.avg-hours-tier-3 { background-color: #ffdcdc; } /* 50-55h */
+.report-table td.avg-hours-tier-4 { background-color: #ffcaca; } /* 55-60h */
+.report-table td.avg-hours-tier-5 { background-color: #ffbaba; } /* 60-65h */
+.report-table td.avg-hours-tier-6 { background-color: #ffaaaa; } /* 65-70h */
+.report-table td.avg-hours-tier-7 { background-color: #ff9999; font-weight: 600; } /* 70-75h */
 
 .report-table tr.weekend td, .report-table tr.holiday td {
   background-color: rgba(0, 122, 255, 0.05);
@@ -235,20 +224,30 @@ details[open] > summary {
   border: none;
 }
 
+.checkbox-container {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.checkbox-container input {
+  width: auto;
+  margin: 0;
+}
+.checkbox-container label {
+  margin-bottom: 0;
+  font-weight: normal;
+}
+
 /* Diagnostic panel styling */
 .diagnostics-output {
-  background-color: #fff;
+  background-color: var(--panel-bg-color);
   border: 1px solid var(--border-color);
-  border-radius: 12px;
-  padding: 1.25rem;
+  border-radius: 8px;
+  padding: 1rem;
   margin-top: 1rem;
-  font-family: var(--font-family);
-  font-size: 0.85rem;
-  color: var(--text-color);
-  background-image: linear-gradient(180deg, rgba(255,255,255,0.9), rgba(245,245,247,0.9));
-  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.08);
-  overflow-x: auto;
-  line-height: 1.5;
+  font-family: monospace;
+  font-size: 0.8rem;
+  color: var(--secondary-text-color);
   white-space: pre-wrap;
   word-wrap: break-word;
 }
