@@ -4,6 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>PSY 당직표</title>
+    <link rel="icon" href="data:," />
     <link rel="stylesheet" href="assets/styles.css" />
   </head>
   <body>
@@ -26,7 +27,7 @@
       </div>
       <div class="field">
         <label for="retry-attempts">재시도 횟수</label>
-        <input id="retry-attempts" type="number" min="1" max="50" value="50" />
+        <input id="retry-attempts" type="number" min="1" value="50" />
       </div>
       
       <!-- 당직 인원 고정: 병당 1, 응당 1 (UI 옵션 제거) -->
@@ -104,8 +105,8 @@ R4 이동인"></textarea>
               </div>
               <div>
                 <input type="checkbox" id="toggle-r3-cap" checked />
-                <label for="toggle-r3-cap">R3 주당 당직 상한 (1회)</label>
-                <small>같은 연차에 휴가자가 없더라도 R3는 한 주에 최대 1회까지만 배치합니다.</small>
+                <label for="toggle-r3-cap">R3 주당 당직 한도 (평시 1회)</label>
+                <small>R3는 한 주에 최소 1회 배치되며, 휴가자가 있는 주에는 최대 2회까지 허용합니다.</small>
               </div>
               <div>
                 <input type="checkbox" id="toggle-r2-min" checked />
@@ -147,20 +148,29 @@ R4 이동인"></textarea>
           <summary>Scoring</summary>
           <fieldset>
             <div class="checkbox-group">
-              <div><label for="score-overtime-soft" title="주간 근무시간이 72시간을 초과하고 75시간 미만일 때, 1건당 부과되는 점수입니다.">시간 초과 (72-75h) 점수</label><input type="number" id="score-overtime-soft" value="1" step="0.5" min="0" /></div>
+              <div class="legend">연차 선택</div>
+              <div class="score-tabs" id="score-class-tabs" role="tablist" aria-label="Scoring class">
+                <button type="button" role="tab" aria-selected="true" aria-pressed="true" data-klass="R1">R1</button>
+                <button type="button" role="tab" aria-selected="false" aria-pressed="false" data-klass="R2">R2</button>
+                <button type="button" role="tab" aria-selected="false" aria-pressed="false" data-klass="R3">R3</button>
+                <button type="button" role="tab" aria-selected="false" aria-pressed="false" data-klass="R4">R4</button>
+              </div>
+              <div id="score-class-indicator" class="legend">현재: R1</div>
+              <div><label for="score-overtime-soft" title="주간 근무시간이 72시간을 초과하고 75시간 미만일 때, 1건당 부과되는 점수입니다.">시간 초과 (72-75h) 점수</label><input type="number" id="score-overtime-soft" value="1" step="0.5" /></div>
               <small>한 주 총 근무 시간이 72~75시간이면 여기서 지정한 패널티를 부과합니다.</small>
-              <div><label for="score-overtime-hard" title="주간 근무시간이 75시간 이상일 때, 1건당 부과되는 점수입니다.">고도 시간 초과 (>=75h) 점수</label><input type="number" id="score-overtime-hard" value="2" step="0.5" min="0" /></div>
+              <div><label for="score-overtime-hard" title="주간 근무시간이 75시간 이상일 때, 1건당 부과되는 점수입니다.">고도 시간 초과 (>=75h) 점수</label><input type="number" id="score-overtime-hard" value="2" step="0.5" /></div>
               <small>한 주에 75시간 이상 근무한 인원에게는 이 값만큼 추가 패널티가 부과됩니다.</small>
-              <div><label for="score-under-40" title="주간 근무시간이 40시간 미만일 때, 1건당 부과되는 점수입니다.">40h 미만 근무 주 점수</label><input type="number" id="score-under-40" value="1" step="0.5" min="0" /></div>
+              <div><label for="score-under-40" title="주간 근무시간이 40시간 미만일 때, 1건당 부과되는 점수입니다.">40h 미만 근무 주 점수</label><input type="number" id="score-under-40" value="1" step="0.5" /></div>
               <small>주당 근무 시간이 40시간 아래로 떨어진 경우 균형을 맞추기 위한 벌점입니다.</small>
-              <div><label for="score-dayoff-base" title="Day-off 보정치가 ±1일 때 받는 기본 점수입니다.">Day-off 기본 점수 (a)</label><input type="number" id="score-dayoff-base" value="0.5" step="0.1" min="0" /></div>
+              <div><label for="score-dayoff-base" title="Day-off 편차가 1일일 때 부과되는 기본 점수입니다.">Day-off 편차 기본 점수</label><input type="number" id="score-dayoff-base" value="0.5" step="0.1" /></div>
               <small>연차 내 평균 대비 Day-off 편차가 1일 있을 때 적용되는 기본 패널티입니다.</small>
-              <div><label for="score-dayoff-increment" title="Day-off 보정치가 ±1을 초과할 때, 1씩 늘어날 때마다 추가되는 점수입니다.">Day-off 추가 점수 (b)</label><input type="number" id="score-dayoff-increment" value="1" step="0.1" min="0" /></div>
+              <div><label for="score-dayoff-increment" title="Day-off 편차가 1일을 초과할 때 늘어나는 추가 점수입니다.">Day-off 편차 추가 점수</label><input type="number" id="score-dayoff-increment" value="1" step="0.1" /></div>
               <small>Day-off 편차가 2일 이상 벌어질 때마다 누적되는 추가 패널티입니다.</small>
-              <div><label for="score-role-base" title="역할(병당/응당) 보정치가 ±1일 때 받는 기본 점수입니다.">역할 기본 점수 (a)</label><input type="number" id="score-role-base" value="1" step="0.1" min="0" /></div>
+              <div><label for="score-role-base" title="병당/응당 역할 횟수가 1회 어긋났을 때 부과되는 기본 점수입니다.">역할 편차 기본 점수</label><input type="number" id="score-role-base" value="1" step="0.1" /></div>
               <small>병당/응당 역할 횟수가 평균에서 1회 벗어났을 때 적용되는 기본 패널티입니다.</small>
-              <div><label for="score-role-increment" title="역할(병당/응당) 보정치가 ±1을 초과할 때, 1씩 늘어날 때마다 추가되는 점수입니다.">역할 추가 점수 (b)</label><input type="number" id="score-role-increment" value="1" step="0.1" min="0" /></div>
+              <div><label for="score-role-increment" title="역할 편차가 1회를 초과할 때 늘어나는 추가 점수입니다.">역할 편차 추가 점수</label><input type="number" id="score-role-increment" value="1" step="0.1" /></div>
               <small>역할 편차가 2회 이상 벌어질 때마다 누적되는 추가 패널티입니다.</small>
+
             </div>
           </fieldset>
         </details>

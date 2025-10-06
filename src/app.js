@@ -62,6 +62,7 @@ runOnReady(() => {
     updateIcsPreview();
   } catch {}
 });
+runOnReady(bindScoreClassTabs);
 ['change','input'].forEach((ev) => {
   startInput?.addEventListener(ev, updateIcsPreview);
   endInput?.addEventListener(ev, updateIcsPreview);
@@ -75,9 +76,6 @@ hardcapToggle?.addEventListener('click', () => {
 document.querySelector('#load-kr-holidays')?.addEventListener('click', () => loadKRHolidays({ merge: true }));
 document.querySelector('#clear-holidays')?.addEventListener('click', () => { holidaysInput.value = ''; });
 
-let lastResult = null;
-let scheduleSeedCounter = 0;
-
 const SCORE_DEFAULTS = {
   overtimeSoft: 1,
   overtimeHard: 2,
@@ -87,15 +85,20 @@ const SCORE_DEFAULTS = {
   roleBase: 1,
   roleIncrement: 1,
 };
+const SCORE_CLASSES = ['R1','R2','R3','R4'];
+let _scoreClass = 'R1';
+let _scoreConfigs = null;
+let lastResult = null;
+let scheduleSeedCounter = 0;
 
 function readScoreInput(el, fallback) {
   if (!el) return fallback;
   const value = Number(el.value);
   if (!Number.isFinite(value)) return fallback;
-  return Math.max(0, value);
+  return value; // allow negatives as requested
 }
 
-function getScoreWeights() {
+function getCurrentScoreInputs() {
   return {
     overtimeSoft: readScoreInput(scoreOvertimeSoft, SCORE_DEFAULTS.overtimeSoft),
     overtimeHard: readScoreInput(scoreOvertimeHard, SCORE_DEFAULTS.overtimeHard),
@@ -105,6 +108,57 @@ function getScoreWeights() {
     roleBase: readScoreInput(scoreRoleBase, SCORE_DEFAULTS.roleBase),
     roleIncrement: readScoreInput(scoreRoleIncrement, SCORE_DEFAULTS.roleIncrement),
   };
+}
+
+function setCurrentScoreInputs(cfg) {
+  if (!cfg) return;
+  scoreOvertimeSoft.value = cfg.overtimeSoft;
+  scoreOvertimeHard.value = cfg.overtimeHard;
+  scoreUnder40Penalty.value = cfg.underwork;
+  scoreDayoffBase.value = cfg.dayoffBase;
+  scoreDayoffIncrement.value = cfg.dayoffIncrement;
+  scoreRoleBase.value = cfg.roleBase;
+  scoreRoleIncrement.value = cfg.roleIncrement;
+}
+
+function ensureScoreConfigs() {
+  if (_scoreConfigs) return _scoreConfigs;
+  const base = getCurrentScoreInputs();
+  _scoreConfigs = Object.fromEntries(SCORE_CLASSES.map(k => [k, { ...base }]));
+  _scoreClass = 'R1';
+  return _scoreConfigs;
+}
+
+function getScoreWeights() {
+  const global = getCurrentScoreInputs();
+  const perClass = ensureScoreConfigs();
+  return { global, perClass };
+}
+
+function bindScoreClassTabs() {
+  const tabs = document.getElementById('score-class-tabs');
+  if (!tabs) return;
+  ensureScoreConfigs();
+  const indicator = document.getElementById('score-class-indicator');
+  if (indicator) indicator.textContent = `현재: ${_scoreClass}`;
+  tabs.addEventListener('click', (e) => {
+    const btn = e.target?.closest('button[data-klass]');
+    if (!btn) return;
+    // save current edits to current class
+    _scoreConfigs[_scoreClass] = getCurrentScoreInputs();
+    // switch
+    const next = btn.getAttribute('data-klass');
+    _scoreClass = next;
+    // update buttons state
+    tabs.querySelectorAll('button[data-klass]').forEach(b => {
+      const sel = b.getAttribute('data-klass') === _scoreClass;
+      b.setAttribute('aria-pressed', sel ? 'true' : 'false');
+      b.setAttribute('aria-selected', sel ? 'true' : 'false');
+    });
+    // load inputs
+    setCurrentScoreInputs(_scoreConfigs[_scoreClass]);
+    if (indicator) indicator.textContent = `현재: ${_scoreClass}`;
+  });
 }
 
 function readToggle(el, fallback = true) {
@@ -149,7 +203,8 @@ function runOnReady(fn) {
   if (document.readyState === 'loading') {
     window.addEventListener('DOMContentLoaded', fn, { once: true });
   } else {
-    fn();
+    // Defer to end of current task to avoid TDZ on later declarations
+    setTimeout(fn, 0);
   }
 }
 
@@ -239,6 +294,8 @@ async function onGenerate() {
 
     try {
       const startDate = startInput.value;
+      // persist current class edits before generating
+      try { ensureScoreConfigs(); _scoreConfigs[_scoreClass] = getCurrentScoreInputs(); } catch {}
       const weeks = getWeeksCount();
       const endDate = endInput.value || null;
       const employees = parseEmployees(employeesInput.value);
@@ -365,29 +422,40 @@ async function onGenerate() {
           return Math.max(0, penalty);
         };
 
-        const calculateHourScore = (result) => {
+        function calculateHourScore(result, perClassScore) {
           if (!result || !result.stats) return 0;
+          const empById = new Map(result.employees.map((e) => [e.id, e]));
           let score = 0;
           for (const person of result.stats) {
+            const klass = empById.get(person.id)?.klass || '기타';
             const weekly = person.weeklyHours || {};
             for (const week of Object.keys(weekly)) {
               const num = Number(weekly[week]);
               if (!Number.isFinite(num)) continue;
               const hours = Math.round(num * 10) / 10;
+              let delta = 0;
+              const wClass = (weights.perClass?.[klass]) || {};
+              const soft = (wClass.overtimeSoft ?? weights.global.overtimeSoft);
+              const hard = (wClass.overtimeHard ?? weights.global.overtimeHard);
+              const under = (wClass.underwork ?? weights.global.underwork);
               if (hours >= 75 - EPSILON) {
-                score += weights.overtimeHard;
+                delta += hard;
               } else if (hours > 72 + EPSILON) {
-                score += weights.overtimeSoft;
+                delta += soft;
               }
               if (hours < 40 - EPSILON) {
-                score += weights.underwork;
+                delta += under;
+              }
+              if (delta) {
+                score += delta;
+                if (perClassScore) perClassScore.set(klass, (perClassScore.get(klass) || 0) + delta);
               }
             }
           }
           return score;
-        };
+        }
 
-        const calculateCarryoverScore = (result) => {
+        function calculateCarryoverScore(result, perClassScore) {
           if (!result) return 0;
           let score = 0;
           const { byungCount, eungCount, dayOff } = computeRoleAndOffCounts(result);
@@ -416,48 +484,175 @@ async function onGenerate() {
                 count: (Number(role.countMap.get(p.id) || 0)) + (prevByName.get(p.name) || 0),
               }));
               const { deltas } = computeCarryoverDeltas(finalCounts);
-              
               for (const d of deltas) {
                 const deltaAbs = Math.abs(d.delta);
-                if (role.key === 'off') {
-                  score += applyPenalty(deltaAbs, weights.dayoffBase, weights.dayoffIncrement);
-                } else {
-                  score += applyPenalty(deltaAbs, weights.roleBase, weights.roleIncrement);
+                const wClass = (weights.perClass?.[klass]) || {};
+                const add = role.key === 'off'
+                  ? applyPenalty(deltaAbs, (wClass.dayoffBase ?? weights.global.dayoffBase), (wClass.dayoffIncrement ?? weights.global.dayoffIncrement))
+                  : applyPenalty(deltaAbs, (wClass.roleBase ?? weights.global.roleBase), (wClass.roleIncrement ?? weights.global.roleIncrement));
+                if (add) {
+                  score += add;
+                  if (perClassScore) perClassScore.set(klass, (perClassScore.get(klass) || 0) + add);
                 }
               }
             }
           }
           return score;
-        };
+        }
 
-        let bestResult = null;
-        let minScore = Infinity;
+        function stitchSchedulesByClass({ classes, bestByClass, base }) {
+          try {
+            const baseRes = base?.result || base;
+            if (!baseRes) return { passed: false, note: '기본 스케줄이 없습니다.' };
+            const days = baseRes.schedule || [];
+            const N = days.length;
+            const merged = [];
+            const empById = new Map(baseRes.employees.map((e) => [e.id, e]));
 
-        for (const result of finalResults) {
-          const hourScore = calculateHourScore(result);
-          const carryoverScore = calculateCarryoverScore(result);
+            for (let i = 0; i < N; i += 1) {
+              const cell = days[i];
+              const duties = [];
+              for (let slot = 0; slot < 2; slot += 1) {
+                const baseDuty = (cell.duties || [])[slot] || null;
+                let klass = null;
+                if (baseDuty && empById.has(baseDuty.id)) klass = empById.get(baseDuty.id).klass || null;
+                // fallback: if klass unknown, leave base duty as-is
+                if (!klass || !bestByClass.has(klass)) {
+                  duties[slot] = baseDuty;
+                  continue;
+                }
+                const candRes = bestByClass.get(klass).result;
+                const pick = (candRes.schedule?.[i]?.duties || [])[slot] || baseDuty;
+                duties[slot] = pick;
+              }
+              merged.push({ key: cell.key, date: cell.date, duties, back: cell.back, underfilled: false });
+            }
+
+            const result = {
+              startDate: baseRes.startDate,
+              endDate: baseRes.endDate,
+              weeks: baseRes.weeks,
+              holidays: baseRes.holidays ? [...baseRes.holidays] : [],
+              employees: baseRes.employees,
+              schedule: merged,
+              config: baseRes.config,
+              warnings: [],
+              stats: [],
+              fairness: {},
+              meta: baseRes.meta,
+            };
+            recomputeStatsInPlace(result);
+            // Optional: lightweight weekly-hour warnings (>72h)
+            addWeeklyWarnings(result, 72);
+
+            // Re-score merged result
+            const perClassScore = new Map();
+            const totalScore = calculateHourScore(result, perClassScore) + calculateCarryoverScore(result, perClassScore);
+            return {
+              passed: true,
+              candidate: { result, totalScore, perClassScore },
+              note: '연차별 최저점 조합 스케줄 적용',
+            };
+          } catch (e) {
+            console.warn('[stitchSchedulesByClass] fail:', e);
+            return { passed: false, note: `조합 실패: ${e?.message || e}` };
+          }
+        }
+
+        function addWeeklyWarnings(result, limit) {
+          const warns = [];
+          for (const s of result.stats || []) {
+            for (const [wk, hours] of Object.entries(s.weeklyHours || {})) {
+              if (hours > limit + 1e-9) warns.push(`${s.name}의 ${wk} 주간 시간이 ${limit}h를 초과했습니다: ${Number(hours).toFixed(1)}h`);
+            }
+          }
+          result.warnings = warns;
+        }
+
+        function recomputeStatsInPlace(result) {
+          const holidays = new Set(result.holidays || []);
+          const empById = new Map(result.employees.map((e) => [e.id, e]));
+          const people = result.employees.map((e) => ({ id: e.id, name: e.name, weeklyHours: {}, totalHours: 0 }));
+          const byId = new Map(people.map((p) => [p.id, p]));
+
+          // Build day-off keys: next day workday after duty
+          const dayOffKeysById = new Map(people.map((p) => [p.id, new Set()]));
+          for (let i = 0; i < result.schedule.length; i += 1) {
+            const cell = result.schedule[i];
+            const next = result.schedule[i + 1];
+            if (!next) continue;
+            const nextDate = new Date(next.date);
+            const wd = nextDate.getDay();
+            const key = fmtDate(nextDate);
+            const isWorkday = (wd >= 1 && wd <= 5) && !holidays.has(key);
+            if (!isWorkday) continue;
+            for (const d of (cell.duties || [])) dayOffKeysById.get(d.id)?.add(key);
+          }
+
+          for (const cell of result.schedule) {
+            const date = new Date(cell.date);
+            const key = fmtDate(date);
+            const wkKey = weekKey(date);
+            const wd = date.getDay();
+            const isWorkday = (wd >= 1 && wd <= 5) && !holidays.has(key);
+            const dutyIds = new Set((cell.duties || []).map((d) => d.id));
+
+            for (const p of people) {
+              let h = 0;
+              const isOnDuty = dutyIds.has(p.id);
+              const isDayOff = dayOffKeysById.get(p.id)?.has(key);
+              if (isWorkday) {
+                if (!isDayOff) h += 8;
+                if (isOnDuty) h += 13.5;
+              } else {
+                if (isOnDuty) h += 21;
+              }
+              if (h > 0) {
+                p.weeklyHours[wkKey] = (p.weeklyHours[wkKey] || 0) + h;
+                p.totalHours += h;
+              }
+            }
+          }
+          result.stats = people;
+        }
+
+        const scoredResults = finalResults.map((res) => {
+          const perClassScore = new Map();
+          const hourScore = calculateHourScore(res, perClassScore);
+          const carryoverScore = calculateCarryoverScore(res, perClassScore);
           const totalScore = hourScore + carryoverScore;
+          return { result: res, totalScore, perClassScore };
+        });
 
-          if (totalScore < minScore) {
-            minScore = totalScore;
-            bestResult = result;
-          }
-          if (minScore === 0) {
-            break; 
-          }
-        }
-        
-        if (minScore === 0) {
-            appendMessage(`성공! ${finalResults.length}번의 시도 중 점수가 0점인 완벽한 스케줄을 찾았습니다!`);
-        } else {
-            appendMessage(`경고: 완벽한 스케줄을 찾지 못했습니다. ${finalResults.length}개의 후보 중 가장 점수가 낮은 스케줄을 선택합니다 (최저 점수: ${minScore}).`);
+        // pick the minimal totalScore as baseline
+        let baseline = null;
+        for (const cand of scoredResults) {
+          if (!baseline || cand.totalScore < baseline.totalScore) baseline = cand;
         }
 
-        // Final rendering logic from the original function
-        lastResult = bestResult;
-        renderSummary(bestResult);
-        renderReport(bestResult, { previous: prev });
-        renderRoster(bestResult);
+        // Build per-class best map
+        const classes = ['R1','R2','R3','R4'];
+        const bestByClass = new Map();
+        for (const k of classes) {
+          let best = null;
+          for (const cand of scoredResults) {
+            const v = cand.perClassScore.get(k) ?? 0;
+            if (!best || v < (best.perClassScore.get(k) ?? 0)) best = cand;
+          }
+          if (best) bestByClass.set(k, best);
+        }
+
+        // Stitch schedules by class from the per-class minima
+        const merged = stitchSchedulesByClass({ classes, bestByClass, base: baseline });
+        const winner = merged?.passed ? merged.candidate : baseline;
+        if (merged?.note) appendMessage(merged.note, 'warn');
+
+        // Render
+        lastResult = winner.result;
+        renderSummary(lastResult);
+        renderReport(lastResult, { previous: prev });
+        renderRoster(lastResult);
+        try { renderScoreBreakdown(winner); } catch {}
         if (exportXlsxBtn) exportXlsxBtn.disabled = false;
         if (exportIcsBtn) exportIcsBtn.disabled = false;
 
@@ -593,6 +788,33 @@ function renderReport(result, opts = {}) {
 
   // carry-over 통계 (stat-to-pass)
   renderCarryoverStats(result, opts);
+}
+
+function renderScoreBreakdown(candidate) {
+  if (!candidate || !candidate.perClassScore) return;
+  const wrap = document.createElement('details');
+  wrap.open = false;
+  const summaryEl = document.createElement('summary');
+  summaryEl.textContent = `연차별 점수 상세 (총점: ${candidate.totalScore})`;
+  wrap.appendChild(summaryEl);
+
+  const table = document.createElement('table');
+  table.className = 'report-table';
+  const thead = document.createElement('thead');
+  const thr = document.createElement('tr');
+  ['연차','점수'].forEach((h) => { const th = document.createElement('th'); th.textContent = h; thr.appendChild(th); });
+  thead.appendChild(thr); table.appendChild(thead);
+  const tbody = document.createElement('tbody');
+  const order = ['R1','R2','R3','R4'];
+  for (const k of order) {
+    const raw = candidate.perClassScore.get(k) ?? 0;
+    const tr = document.createElement('tr');
+    [[k],[raw]].forEach((val) => { const td = document.createElement('td'); td.textContent = String(val); tr.appendChild(td); });
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+  report.prepend(wrap);
+  wrap.appendChild(table);
 }
 
 // onExportJson / onExportCsv 제거(미사용)
