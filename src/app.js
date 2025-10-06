@@ -27,6 +27,12 @@ const icsPreview = document.querySelector('#ics-preview');
 const hardcapToggle = document.querySelector('#role-hardcap-toggle');
 const toggleR1Cap = document.querySelector('#toggle-r1-cap');
 const toggleR3Cap = document.querySelector('#toggle-r3-cap');
+const toggleR2Min = document.querySelector('#toggle-r2-min');
+const toggleR3Balance = document.querySelector('#toggle-r3-balance');
+const toggleDayoffWish = document.querySelector('#toggle-dayoff-wish');
+const toggleR3PediatricWed = document.querySelector('#toggle-r3-ped-wed');
+const toggleVacationBan = document.querySelector('#toggle-vacation-ban');
+const toggleUnavailableBan = document.querySelector('#toggle-unavailable-ban');
 const scoreOvertimeSoft = document.querySelector('#score-overtime-soft');
 const scoreOvertimeHard = document.querySelector('#score-overtime-hard');
 const scoreUnder40Penalty = document.querySelector('#score-under-40');
@@ -99,6 +105,11 @@ function getScoreWeights() {
     roleBase: readScoreInput(scoreRoleBase, SCORE_DEFAULTS.roleBase),
     roleIncrement: readScoreInput(scoreRoleIncrement, SCORE_DEFAULTS.roleIncrement),
   };
+}
+
+function readToggle(el, fallback = true) {
+  if (!el) return fallback;
+  return !!el.checked;
 }
 
 function nextRandomSeed() {
@@ -244,14 +255,48 @@ async function onGenerate() {
       const prior = getPriorDayDutyFromUI();
 
       // --- Read ILP rule toggles from UI ---
-      const enforceR1Cap = toggleR1Cap.checked;
-      const enforceR3Cap = toggleR3Cap.checked;
+      const enforceR1Cap = readToggle(toggleR1Cap);
+      const enforceR3Cap = readToggle(toggleR3Cap);
+      const enforceR2Min = readToggle(toggleR2Min);
+      const enforceR3Balance = readToggle(toggleR3Balance);
+      const enforceDayoffWishRule = readToggle(toggleDayoffWish);
+      const enforceR3PediatricWedBan = readToggle(toggleR3PediatricWed);
+      const enforceVacationExclusion = readToggle(toggleVacationBan);
+      const enforceUnavailableExclusion = readToggle(toggleUnavailableBan);
       const enforceDayoffBalance = true; // Always enforce day-off balance
 
       const runSchedule = (mode, seed, r3Cap = false, r1Cap = false, hourCap = 'strict') => {
         const randomSeed = Number.isFinite(seed) ? seed : nextRandomSeed();
         console.log(`[SCHEDULER] Using random seed: ${randomSeed}`);
-        const args = { startDate, endDate, weeks, weekMode, employees, holidays, dutyUnavailableByName: Object.fromEntries(dutyUnavailable), dayoffWishByName: Object.fromEntries(dayoffWish), vacationDaysByName: Object.fromEntries(vacations), priorDayDuty: prior, optimization, weekdaySlots, weekendSlots: 2, timeBudgetMs: budgetMs, roleHardcapMode: mode, prevStats: prev, randomSeed, enforceR3WeeklyCap: r3Cap, enforceR1WeeklyCap: r1Cap, enforceDayoffBalance, weeklyHourCapMode: hourCap };
+        const args = {
+          startDate,
+          endDate,
+          weeks,
+          weekMode,
+          employees,
+          holidays,
+          dutyUnavailableByName: enforceUnavailableExclusion ? Object.fromEntries(dutyUnavailable) : {},
+          dayoffWishByName: enforceDayoffWishRule ? Object.fromEntries(dayoffWish) : {},
+          vacationDaysByName: enforceVacationExclusion ? Object.fromEntries(vacations) : {},
+          priorDayDuty: prior,
+          optimization,
+          weekdaySlots,
+          weekendSlots: 2,
+          timeBudgetMs: budgetMs,
+          roleHardcapMode: mode,
+          prevStats: prev,
+          randomSeed,
+          enforceR3WeeklyCap: r3Cap,
+          enforceR1WeeklyCap: r1Cap,
+          enforceR2WeeklyMin: enforceR2Min,
+          enforceR3NonPediatricBalance: enforceR3Balance,
+          enforceDayoffWish: enforceDayoffWishRule,
+          enforceR3PediatricWedBan,
+          enforceVacationExclusion,
+          enforceUnavailableExclusion,
+          enforceDayoffBalance,
+          weeklyHourCapMode: hourCap,
+        };
         return generateSchedule(args);
       };
 

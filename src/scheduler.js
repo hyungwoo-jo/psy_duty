@@ -55,6 +55,12 @@ function prepareContext(params) {
     enforceR1WeeklyCap = false,
     enforceDayoffBalance = true,
     weeklyHourCapMode = 'strict',
+    enforceR2WeeklyMin = true,
+    enforceR3NonPediatricBalance = true,
+    enforceDayoffWish = true,
+    enforceR3PediatricWedBan = true,
+    enforceVacationExclusion = true,
+    enforceUnavailableExclusion = true,
   } = params || {};
 
   if (!employees || employees.length < 2) {
@@ -95,9 +101,9 @@ function prepareContext(params) {
       pediatric: !!(typeof emp === 'string' ? false : emp.pediatric),
       emergency: !!(typeof emp === 'string' ? false : emp.emergency),
       preference: (typeof emp === 'string' ? 'any' : emp.preference) || 'any',
-      dutyUnavailable: new Set(iterableOrEmpty(dutyUnavailableByName[name])),
-      dayoffWish: new Set(iterableOrEmpty(dayoffWishByName[name])),
-      vacationDays: new Set(iterableOrEmpty(vacationDaysByName[name])),
+      dutyUnavailable: enforceUnavailableExclusion ? new Set(iterableOrEmpty(dutyUnavailableByName[name])) : new Set(),
+      dayoffWish: enforceDayoffWish ? new Set(iterableOrEmpty(dayoffWishByName[name])) : new Set(),
+      vacationDays: enforceVacationExclusion ? new Set(iterableOrEmpty(vacationDaysByName[name])) : new Set(),
       carryover: extractCarryover(prevStats, name),
       isPriorDuty: priorDutyNames.has(name),
     };
@@ -137,7 +143,7 @@ function prepareContext(params) {
     }
   }
 
-  const dayoffWishes = buildDayoffWishes({ days, employees: employeesWithMeta, holidaySet, dayKeys });
+  const dayoffWishes = enforceDayoffWish ? buildDayoffWishes({ days, employees: employeesWithMeta, holidaySet, dayKeys }) : [];
 
   const { capBy, capEu, minCapBy, minCapEu } = computeRoleCaps({
     days,
@@ -200,6 +206,12 @@ function prepareContext(params) {
     vacationWeekdays,
     enforceR3WeeklyCap,
     enforceR1WeeklyCap,
+    enforceR2WeeklyMin,
+    enforceR3NonPediatricBalance,
+    enforceDayoffWish,
+    enforceR3PediatricWedBan,
+    enforceVacationExclusion,
+    enforceUnavailableExclusion,
     weeklyHourCapMode,
     unavoidableWeekKeys,
   };
@@ -347,6 +359,12 @@ function buildModel(ctx) {
     enforceDayoffBalance,
     weeklyHourCapMode,
     unavoidableWeekKeys,
+    enforceR2WeeklyMin,
+    enforceR3NonPediatricBalance,
+    enforceDayoffWish,
+    enforceR3PediatricWedBan,
+    enforceVacationExclusion,
+    enforceUnavailableExclusion,
   } = ctx;
 
   const model = {
@@ -361,9 +379,11 @@ function buildModel(ctx) {
   const underfillVars = [];
 
   // Day-off wish constraints (force duty on the day before wished Day-off)
-  for (const wish of dayoffWishes) {
-    const constraintName = `wish_${wish.personId}_${wish.dayIndex}`;
-    model.constraints[constraintName] = { equal: 1 }; // Force duty
+  if (enforceDayoffWish) {
+    for (const wish of dayoffWishes) {
+      const constraintName = `wish_${wish.personId}_${wish.dayIndex}`;
+      model.constraints[constraintName] = { equal: 1 }; // Force duty
+    }
   }
 
   // Slot constraints and underfill variables
@@ -444,8 +464,8 @@ function buildModel(ctx) {
   }
 
   // R3 non-pediatric pair balancing (+/-1)
-  const r3NonPediatricPair = employees.filter(p => p.klass === 'R3' && !p.pediatric);
-  if (r3NonPediatricPair.length === 2) {
+  const r3NonPediatricPair = enforceR3NonPediatricBalance ? employees.filter(p => p.klass === 'R3' && !p.pediatric) : [];
+  if (enforceR3NonPediatricBalance && r3NonPediatricPair.length === 2) {
     const p1 = r3NonPediatricPair[0].id;
     const p2 = r3NonPediatricPair[1].id;
     model.constraints[`r3_balance_byung_1`] = { max: 1 };
@@ -479,11 +499,13 @@ function buildModel(ctx) {
   }
 
   // R2 주 최소 1회 당직 제약
-  const r2s = employees.filter(p => p.klass === 'R2');
-  for (const person of r2s) {
-    for (const wk of weekKeys) {
-      const constraintName = `r2_weekly_min_${person.id}_${wk}`;
-      model.constraints[constraintName] = { min: 1 };
+  if (enforceR2WeeklyMin) {
+    const r2s = employees.filter(p => p.klass === 'R2');
+    for (const person of r2s) {
+      for (const wk of weekKeys) {
+        const constraintName = `r2_weekly_min_${person.id}_${wk}`;
+        model.constraints[constraintName] = { min: 1 };
+      }
     }
   }
 
@@ -537,7 +559,7 @@ function buildModel(ctx) {
       const slotConstraint = slotConstraintName(dayIdx, slot);
 
       for (const person of employees) {
-        if (!isEligibleForSlot({ person, neededClass, date, dayKey, slot, isWeekday, holidaySet, dayIdx, priorCooldownIndex })) {
+        if (!isEligibleForSlot({ person, neededClass, date, dayKey, slot, isWeekday, holidaySet, dayIdx, priorCooldownIndex, enforceR3PediatricWedBan })) {
           continue;
         }
         const varName = `x_${dayIdx}_${slot}_${person.id}`;
@@ -590,7 +612,7 @@ function buildModel(ctx) {
         }
 
         // R2 주 최소 1회 당직 제약 변수 추가
-        if (person.klass === 'R2') {
+        if (enforceR2WeeklyMin && person.klass === 'R2') {
           const constraintName = `r2_weekly_min_${person.id}_${weekKey}`;
           if (model.constraints[constraintName]) {
             model.variables[varName][constraintName] = 1;
@@ -624,7 +646,7 @@ function buildModel(ctx) {
         }
 
         // Add to R3 non-pediatric pair balancing constraints
-        if (r3NonPediatricPair.length === 2) {
+        if (enforceR3NonPediatricBalance && r3NonPediatricPair.length === 2) {
           const p1Id = r3NonPediatricPair[0].id;
           const p2Id = r3NonPediatricPair[1].id;
           if (person.id === p1Id || person.id === p2Id) {
@@ -662,13 +684,13 @@ function buildModel(ctx) {
 
 
 
-function isEligibleForSlot({ person, neededClass, date, dayKey, slot, isWeekday, holidaySet, dayIdx, priorCooldownIndex }) {
+function isEligibleForSlot({ person, neededClass, date, dayKey, slot, isWeekday, holidaySet, dayIdx, priorCooldownIndex, enforceR3PediatricWedBan }) {
   if ((person.klass || '') !== neededClass) return false;
   if (person.vacationDays.has(dayKey)) return false;
   if (person.dutyUnavailable.has(dayKey)) return false;
   if (person.dayoffWish.has(dayKey)) return false;
   if (priorCooldownIndex.get(person.id)?.has(dayIdx)) return false;
-  if (date.getDay() === 3 && person.klass === 'R3' && person.pediatric) return false;
+  if (enforceR3PediatricWedBan && date.getDay() === 3 && person.klass === 'R3' && person.pediatric) return false;
   return true;
 }
 

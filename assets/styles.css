@@ -224,6 +224,13 @@ details[open] > summary {
   border: none;
 }
 
+.checkbox-group small {
+  display: block;
+  font-size: 0.8rem;
+  color: var(--secondary-text-color);
+  margin: -0.25rem 0 0.75rem 0;
+}
+
 .checkbox-container {
   display: flex;
   align-items: center;
