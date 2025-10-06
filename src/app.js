@@ -29,6 +29,7 @@ const toggleR1Cap = document.querySelector('#toggle-r1-cap');
 const toggleR3Cap = document.querySelector('#toggle-r3-cap');
 const scoreOvertimeSoft = document.querySelector('#score-overtime-soft');
 const scoreOvertimeHard = document.querySelector('#score-overtime-hard');
+const scoreUnder40Penalty = document.querySelector('#score-under-40');
 const scoreDayoffBase = document.querySelector('#score-dayoff-base');
 const scoreDayoffIncrement = document.querySelector('#score-dayoff-increment');
 const scoreRoleBase = document.querySelector('#score-role-base');
@@ -70,6 +71,35 @@ document.querySelector('#clear-holidays')?.addEventListener('click', () => { hol
 
 let lastResult = null;
 let scheduleSeedCounter = 0;
+
+const SCORE_DEFAULTS = {
+  overtimeSoft: 1,
+  overtimeHard: 2,
+  underwork: 1,
+  dayoffBase: 0.5,
+  dayoffIncrement: 1,
+  roleBase: 1,
+  roleIncrement: 1,
+};
+
+function readScoreInput(el, fallback) {
+  if (!el) return fallback;
+  const value = Number(el.value);
+  if (!Number.isFinite(value)) return fallback;
+  return Math.max(0, value);
+}
+
+function getScoreWeights() {
+  return {
+    overtimeSoft: readScoreInput(scoreOvertimeSoft, SCORE_DEFAULTS.overtimeSoft),
+    overtimeHard: readScoreInput(scoreOvertimeHard, SCORE_DEFAULTS.overtimeHard),
+    underwork: readScoreInput(scoreUnder40Penalty, SCORE_DEFAULTS.underwork),
+    dayoffBase: readScoreInput(scoreDayoffBase, SCORE_DEFAULTS.dayoffBase),
+    dayoffIncrement: readScoreInput(scoreDayoffIncrement, SCORE_DEFAULTS.dayoffIncrement),
+    roleBase: readScoreInput(scoreRoleBase, SCORE_DEFAULTS.roleBase),
+    roleIncrement: readScoreInput(scoreRoleIncrement, SCORE_DEFAULTS.roleIncrement),
+  };
+}
 
 function nextRandomSeed() {
   try {
@@ -282,17 +312,32 @@ async function onGenerate() {
         }
 
         appendMessage('생성된 스케줄들을 새로운 점수 체계로 평가합니다...');
-        
-        const calculateOvertimeScore = (result) => {
+        const weights = getScoreWeights();
+        const EPSILON = 1e-6;
+
+        const applyPenalty = (deltaAbs, base, increment) => {
+          if (!(deltaAbs > 0)) return 0;
+          const steps = Math.max(0, deltaAbs - 1);
+          const penalty = base + steps * increment;
+          return Math.max(0, penalty);
+        };
+
+        const calculateHourScore = (result) => {
           if (!result || !result.stats) return 0;
           let score = 0;
           for (const person of result.stats) {
-            for (const week in person.weeklyHours) {
-              const hours = person.weeklyHours[week];
-              if (hours >= 75) {
-                score += 2;
-              } else if (hours > 72 + 1e-9) {
-                score += 1;
+            const weekly = person.weeklyHours || {};
+            for (const week of Object.keys(weekly)) {
+              const raw = weekly[week];
+              if (typeof raw !== 'number' || !Number.isFinite(raw)) continue;
+              const hours = Number(raw.toFixed(1));
+              if (hours >= 75 - EPSILON) {
+                score += weights.overtimeHard;
+              } else if (hours > 72 + EPSILON) {
+                score += weights.overtimeSoft;
+              }
+              if (hours < 40 - EPSILON) {
+                score += weights.underwork;
               }
             }
           }
@@ -332,13 +377,9 @@ async function onGenerate() {
               for (const d of deltas) {
                 const deltaAbs = Math.abs(d.delta);
                 if (role.key === 'off') {
-                  if (deltaAbs === 1) {
-                    score += 0.5;
-                  } else if (deltaAbs > 1) {
-                    score += (deltaAbs - 1);
-                  }
-                } else { // byung and eung
-                  score += deltaAbs;
+                  score += applyPenalty(deltaAbs, weights.dayoffBase, weights.dayoffIncrement);
+                } else {
+                  score += applyPenalty(deltaAbs, weights.roleBase, weights.roleIncrement);
                 }
               }
             }
@@ -350,9 +391,9 @@ async function onGenerate() {
         let minScore = Infinity;
 
         for (const result of finalResults) {
-          const overtimeScore = calculateOvertimeScore(result);
+          const hourScore = calculateHourScore(result);
           const carryoverScore = calculateCarryoverScore(result);
-          const totalScore = overtimeScore + carryoverScore;
+          const totalScore = hourScore + carryoverScore;
 
           if (totalScore < minScore) {
             minScore = totalScore;
@@ -1209,21 +1250,20 @@ function renderWeeklyHours(result) {
         td.textContent = String(val);
         if (idx >= 1) td.classList.add('num');
         if (idx >= 1 && idx <= weekKeys.length) {
-          const v = values[idx - 1] || 0;
-          if (v >= 80) {
+          const rawHours = values[idx - 1] || 0;
+          const hours = Number(rawHours.toFixed(1));
+          if (hours >= 80) {
             td.classList.add('hours-tier-7');
-          } else if (v >= 75) {
+          } else if (hours >= 75) {
             td.classList.add('hours-tier-6');
-          } else if (v >= 72) {
+          } else if (hours >= 72) {
             td.classList.add('hours-tier-5');
-          } else if (v >= 60) {
+          } else if (hours >= 60) {
             td.classList.add('hours-tier-4');
-          } else if (v >= 50) {
+          } else if (hours >= 50) {
             td.classList.add('hours-tier-3');
-          } else if (v > 40) {
+          } else if (hours > 40) {
             td.classList.add('hours-tier-2');
-          } else if (v > 0) {
-            td.classList.add('hours-tier-1');
           }
         }
         tr.appendChild(td);
