@@ -1,0 +1,33 @@
+{
+  "label": "Baseline 4-week schedule",
+  "description": "Default resident list with minimal constraints over 4 weeks.",
+  "startDate": "",
+  "weeks": 4,
+  "retryAttempts": 10,
+  "employees": "R1 윤성민\nR1 장주만\nR1 조형우\nR2 김대근\nR2 김진아\nR2 이수연\nR3 권지영, 소아\nR3 김선민\nR3 윤준성, 응급\nR4 김지영\nR4 김현태\nR4 이동인",
+  "holidays": "2025-01-01",
+  "unavailable": "장주만: 2025-01-07, 2025-01-15\n조형우: 2025-01-10",
+  "dayoffWish": "윤성민: 2025-01-09",
+  "vacations": "김현태: 2025-01-20~2025-01-24",
+  "toggles": {
+    "r1WeeklyCap": true,
+    "r3WeeklyCap": true,
+    "r2WeeklyMin": true,
+    "r3Balance": true,
+    "dayoffWish": true,
+    "r3PediatricWednesday": true,
+    "vacationExclusion": true,
+    "unavailableExclusion": true
+  },
+  "scores": {
+    "overtimeSoft": 1,
+    "overtimeHard": 2,
+    "under40": 1,
+    "dayoffBase": 0.5,
+    "dayoffIncrement": 1,
+    "roleBase": 1,
+    "roleIncrement": 1
+  },
+  "expectedSummaryContains": ["기간:"],
+  "expectedWarnings": []
+}

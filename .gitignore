@@ -6,3 +6,12 @@
 /serve/server.log
 /serve/server.pid
 
+# Node / Playwright artifacts
+/node_modules/
+/package.json
+/package-lock.json
+/playwright-report/
+/test-results/
+/tests/node_modules/
+/tests/.cache/
+/tests/tmp/

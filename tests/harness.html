@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <title>PSY Duty Test Harness</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      margin: 0;
+      padding: 1.5rem;
+      background: #f5f5f7;
+      color: #1d1d1f;
+    }
+    h1 {
+      margin-top: 0;
+    }
+    #app-frame {
+      width: 100%;
+      min-height: 820px;
+      border: 1px solid #d2d2d7;
+      border-radius: 12px;
+      background: #fff;
+      box-shadow: 0 6px 18px rgba(15, 23, 42, 0.08);
+    }
+    #run-output {
+      margin-top: 1.5rem;
+      padding: 1rem;
+      background: #fff;
+      border-radius: 12px;
+      border: 1px solid #d2d2d7;
+      box-shadow: 0 4px 12px rgba(15, 23, 42, 0.05);
+    }
+    #status {
+      font-weight: 600;
+      margin-bottom: 0.5rem;
+    }
+    pre {
+      background: #1e293b;
+      color: #e2e8f0;
+      padding: 1rem;
+      border-radius: 8px;
+      overflow-x: auto;
+      font-size: 0.9rem;
+    }
+    .note {
+      margin: 0.25rem 0;
+    }
+    .note.ok {
+      color: #1e8e3e;
+    }
+    .note.warn {
+      color: #d93025;
+    }
+  </style>
+</head>
+<body>
+  <h1>PSY Duty Test Harness</h1>
+  <p id="scenario-meta">시나리오 정보를 불러오는 중입니다…</p>
+  <iframe id="app-frame" title="PSY Duty App" src="about:blank"></iframe>
+
+  <section id="run-output">
+    <div id="status">준비 중…</div>
+    <div id="assertions"></div>
+    <pre id="result-json">{\n  "status": "pending"\n}</pre>
+  </section>
+
+  <script type="module">
+    const statusEl = document.getElementById('status');
+    const resultEl = document.getElementById('result-json');
+    const notesEl = document.getElementById('assertions');
+    const metaEl = document.getElementById('scenario-meta');
+    const frame = document.getElementById('app-frame');
+
+    window.__HARNESS_DONE__ = false;
+    window.__HARNESS_RESULT__ = null;
+
+    const params = new URLSearchParams(window.location.search);
+    const scenarioName = params.get('scenario') || 'sample';
+    const scenarioUrl = `./scenarios/${scenarioName}.json`;
+
+    const toggleSelectors = {
+      r1WeeklyCap: '#toggle-r1-cap',
+      r3WeeklyCap: '#toggle-r3-cap',
+      r2WeeklyMin: '#toggle-r2-min',
+      r3Balance: '#toggle-r3-balance',
+      dayoffWish: '#toggle-dayoff-wish',
+      r3PediatricWednesday: '#toggle-r3-ped-wed',
+      vacationExclusion: '#toggle-vacation-ban',
+      unavailableExclusion: '#toggle-unavailable-ban',
+    };
+
+    const scoreSelectors = {
+      overtimeSoft: '#score-overtime-soft',
+      overtimeHard: '#score-overtime-hard',
+      under40: '#score-under-40',
+      dayoffBase: '#score-dayoff-base',
+      dayoffIncrement: '#score-dayoff-increment',
+      roleBase: '#score-role-base',
+      roleIncrement: '#score-role-increment',
+    };
+
+    function setStatus(text) {
+      statusEl.textContent = text;
+    }
+
+    const assertionSummary = { ok: [], warn: [] };
+
+    function addNote(message, type = 'ok') {
+      const div = document.createElement('div');
+      div.className = `note ${type}`;
+      div.textContent = message;
+      notesEl.appendChild(div);
+      assertionSummary[type]?.push(message);
+    }
+
+    async function loadScenario() {
+      const resp = await fetch(scenarioUrl);
+      if (!resp.ok) {
+        throw new Error(`시나리오(${scenarioName})를 불러오지 못했습니다: ${resp.status}`);
+      }
+      return resp.json();
+    }
+
+    function dispatchInput(el) {
+      if (!el) return;
+      ['input', 'change'].forEach((evt) => {
+        el.dispatchEvent(new Event(evt, { bubbles: true }));
+      });
+    }
+
+    function setField(doc, selector, value) {
+      if (value === undefined || value === null || value === '') return;
+      const el = doc.querySelector(selector);
+      if (!el) return;
+      el.value = value;
+      dispatchInput(el);
+    }
+
+    function setCheckbox(doc, selector, flag) {
+      if (flag === undefined || flag === null) return;
+      const el = doc.querySelector(selector);
+      if (!el) return;
+      el.checked = !!flag;
+      dispatchInput(el);
+    }
+
+    function setTextArea(doc, selector, text) {
+      if (text === undefined || text === null) return;
+      const el = doc.querySelector(selector);
+      if (!el) return;
+      el.value = text;
+      dispatchInput(el);
+    }
+
+    function applyScenario(doc, scenario) {
+      setField(doc, '#start-date', scenario.startDate);
+      setField(doc, '#end-date', scenario.endDate);
+      if (scenario.weeks !== undefined) setField(doc, '#weeks', String(scenario.weeks));
+      if (scenario.retryAttempts !== undefined) setField(doc, '#retry-attempts', String(scenario.retryAttempts));
+
+      setTextArea(doc, '#employees', scenario.employees);
+      setTextArea(doc, '#holidays', scenario.holidays);
+      setTextArea(doc, '#unavailable', scenario.unavailable);
+      setTextArea(doc, '#dayoff-wish', scenario.dayoffWish);
+      setTextArea(doc, '#vacations', scenario.vacations);
+
+      if (scenario.toggles) {
+        for (const [key, value] of Object.entries(scenario.toggles)) {
+          const sel = toggleSelectors[key];
+          if (sel) setCheckbox(doc, sel, value);
+        }
+      }
+
+      if (scenario.scores) {
+        for (const [key, value] of Object.entries(scenario.scores)) {
+          const sel = scoreSelectors[key];
+          if (sel) setField(doc, sel, String(value));
+        }
+      }
+    }
+
+    function clickGenerate(doc) {
+      const btn = doc.querySelector('#generate');
+      if (!btn) throw new Error('생성 버튼을 찾을 수 없습니다.');
+      btn.click();
+    }
+
+    function waitForCompletion(doc, timeoutMs = 60000) {
+      return new Promise((resolve, reject) => {
+        const deadline = Date.now() + timeoutMs;
+        const summaryEl = () => doc.querySelector('#summary');
+        const messageEl = () => doc.querySelector('#messages');
+        const overlay = () => doc.querySelector('#loading-overlay');
+
+        function poll() {
+          const now = Date.now();
+          if (now > deadline) {
+            reject(new Error('생성 결과를 기다리는 중 타임아웃이 발생했습니다.'));
+            return;
+          }
+          const summaryText = summaryEl()?.textContent?.trim() || '';
+          const messageText = messageEl()?.textContent?.trim() || '';
+          const overlayActive = overlay()?.classList?.contains('show');
+
+          if (summaryText) {
+            resolve({ summaryText, messageText });
+            return;
+          }
+          if (messageText && /오류|실패/i.test(messageText)) {
+            resolve({ summaryText, messageText });
+            return;
+          }
+          if (!overlayActive && !summaryText && messageText) {
+            resolve({ summaryText, messageText });
+            return;
+          }
+          requestAnimationFrame(poll);
+        }
+        poll();
+      });
+    }
+
+    function collectWarnings(doc) {
+      return Array.from(doc.querySelectorAll('#report .warn'))
+        .map((el) => el.textContent.trim())
+        .filter(Boolean);
+    }
+
+    function evaluateExpectations(result, scenario) {
+      notesEl.innerHTML = '';
+      if (Array.isArray(scenario.expectedSummaryContains)) {
+        for (const token of scenario.expectedSummaryContains) {
+          if (result.summary.includes(token)) {
+            addNote(`요약에 "${token}" 포함 확인`, 'ok');
+          } else {
+            addNote(`요약에 "${token}" 문자열이 없습니다.`, 'warn');
+          }
+        }
+      }
+      if (Array.isArray(scenario.expectedWarnings)) {
+        for (const token of scenario.expectedWarnings) {
+          if (result.warnings.some((line) => line.includes(token))) {
+            addNote(`경고에 "${token}" 포함 확인`, 'ok');
+          } else {
+            addNote(`경고에 "${token}" 문자열이 없습니다.`, 'warn');
+          }
+        }
+      }
+    }
+
+    function showResult(payload) {
+      resultEl.textContent = JSON.stringify(payload, null, 2);
+    }
+
+    try {
+      setStatus('시나리오를 불러오는 중입니다…');
+      const scenario = await loadScenario();
+      const label = scenario.label || `Scenario: ${scenarioName}`;
+      const desc = scenario.description ? `<br /><small>${scenario.description}</small>` : '';
+      metaEl.innerHTML = `<strong>${label}</strong>${desc}`;
+
+      frame.addEventListener('load', async () => {
+        try {
+          setStatus('폼을 채우는 중…');
+          const doc = frame.contentDocument;
+          if (!doc) throw new Error('iframe 문서를 불러오지 못했습니다.');
+          applyScenario(doc, scenario);
+          await new Promise((resolve) => setTimeout(resolve, 100));
+          setStatus('생성 요청 중…');
+          clickGenerate(doc);
+          const { summaryText, messageText } = await waitForCompletion(doc);
+          const warnings = collectWarnings(doc);
+          const payload = {
+            scenario: scenarioName,
+            status: summaryText ? 'ok' : 'warning',
+            summary: summaryText,
+            messages: messageText,
+            warnings,
+            timestamp: new Date().toISOString(),
+          };
+          evaluateExpectations(payload, scenario);
+          payload.assertions = assertionSummary;
+          showResult(payload);
+          setStatus(summaryText ? '완료' : '완료 (요약 미확인)');
+          window.__HARNESS_RESULT__ = payload;
+          window.__HARNESS_DONE__ = true;
+        } catch (err) {
+          setStatus(`실패: ${err.message}`);
+          const payload = { scenario: scenarioName, status: 'error', error: err.message, timestamp: new Date().toISOString(), assertions: assertionSummary };
+          showResult(payload);
+          addNote(err.stack || String(err), 'warn');
+          window.__HARNESS_RESULT__ = payload;
+          window.__HARNESS_DONE__ = true;
+        }
+      }, { once: true });
+
+      frame.src = '../index.html';
+    } catch (err) {
+      setStatus(`시작 실패: ${err.message}`);
+      const payload = { scenario: scenarioName, status: 'error', error: err.message, timestamp: new Date().toISOString(), assertions: assertionSummary };
+      showResult(payload);
+      addNote(err.stack || String(err), 'warn');
+      window.__HARNESS_RESULT__ = payload;
+      window.__HARNESS_DONE__ = true;
+    }
+  </script>
+</body>
+</html>
