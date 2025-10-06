@@ -569,19 +569,35 @@ async function onGenerate() {
           result.warnings = warns;
         }
 
-        function recomputeStatsInPlace(result) {
-          const holidays = new Set(result.holidays || []);
-          const empById = new Map(result.employees.map((e) => [e.id, e]));
-          const people = result.employees.map((e) => ({ id: e.id, name: e.name, weeklyHours: {}, totalHours: 0 }));
-          const byId = new Map(people.map((p) => [p.id, p]));
+function recomputeStatsInPlace(result) {
+  const holidays = new Set(result.holidays || []);
+  const empById = new Map(result.employees.map((e) => [e.id, e]));
+  const people = result.employees.map((e) => ({ id: e.id, name: e.name, weeklyHours: {}, totalHours: 0 }));
+  const byId = new Map(people.map((p) => [p.id, p]));
 
-          // Build day-off keys: next day workday after duty
-          const dayOffKeysById = new Map(people.map((p) => [p.id, new Set()]));
-          for (let i = 0; i < result.schedule.length; i += 1) {
-            const cell = result.schedule[i];
-            const next = result.schedule[i + 1];
-            if (!next) continue;
-            const nextDate = new Date(next.date);
+  // Build day-off keys: next day workday after duty
+  const dayOffKeysById = new Map(people.map((p) => [p.id, new Set()]));
+  const prior = result.config?.priorDayDuty || {};
+  const priorNames = new Set([prior.byung, prior.eung].filter(Boolean));
+  if (result.schedule.length > 0) {
+    const firstDay = result.schedule[0];
+    const firstDate = new Date(firstDay.date);
+    const firstKey = fmtDate(firstDate);
+    const wd = firstDate.getDay();
+    const isWorkday = (wd >= 1 && wd <= 5) && !holidays.has(firstKey);
+    if (isWorkday && priorNames.size) {
+      for (const emp of result.employees) {
+        if (priorNames.has(emp.name)) {
+          dayOffKeysById.get(emp.id)?.add(firstKey);
+        }
+      }
+    }
+  }
+  for (let i = 0; i < result.schedule.length; i += 1) {
+    const cell = result.schedule[i];
+    const next = result.schedule[i + 1];
+    if (!next) continue;
+    const nextDate = new Date(next.date);
             const wd = nextDate.getDay();
             const key = fmtDate(nextDate);
             const isWorkday = (wd >= 1 && wd <= 5) && !holidays.has(key);
