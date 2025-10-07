@@ -40,6 +40,7 @@ const scoreDayoffBase = document.querySelector('#score-dayoff-base');
 const scoreDayoffIncrement = document.querySelector('#score-dayoff-increment');
 const scoreRoleBase = document.querySelector('#score-role-base');
 const scoreRoleIncrement = document.querySelector('#score-role-increment');
+const scoreGapPenalty = document.querySelector('#score-gap2');
 let roleHardcapMode = hardcapToggle?.dataset.mode === 'relaxed' ? 'relaxed' : 'strict';
 // 최적화 선택 UI 제거: 기본 strong
 // 주 계산 모드 옵션 제거: 달력 기준(월–일) 고정
@@ -84,6 +85,7 @@ const SCORE_DEFAULTS = {
   dayoffIncrement: 1,
   roleBase: 1,
   roleIncrement: 1,
+  gapPenalty: 0,
 };
 const SCORE_CLASSES = ['R1','R2','R3','R4'];
 let _scoreClass = 'R1';
@@ -107,6 +109,7 @@ function getCurrentScoreInputs() {
     dayoffIncrement: readScoreInput(scoreDayoffIncrement, SCORE_DEFAULTS.dayoffIncrement),
     roleBase: readScoreInput(scoreRoleBase, SCORE_DEFAULTS.roleBase),
     roleIncrement: readScoreInput(scoreRoleIncrement, SCORE_DEFAULTS.roleIncrement),
+    gapPenalty: readScoreInput(scoreGapPenalty, SCORE_DEFAULTS.gapPenalty),
   };
 }
 
@@ -119,6 +122,7 @@ function setCurrentScoreInputs(cfg) {
   scoreDayoffIncrement.value = cfg.dayoffIncrement;
   scoreRoleBase.value = cfg.roleBase;
   scoreRoleIncrement.value = cfg.roleIncrement;
+  if (scoreGapPenalty) scoreGapPenalty.value = cfg.gapPenalty;
 }
 
 function ensureScoreConfigs() {
@@ -500,6 +504,55 @@ async function onGenerate() {
           return score;
         }
 
+        function computeGapPenaltyCounts(result) {
+          const counts = new Map();
+          const lastSeen = new Map();
+          const start = result.startDate ? new Date(result.startDate) : null;
+          const prior = result.config?.priorDayDuty || {};
+          if (start) {
+            const priorDate = new Date(start);
+            priorDate.setDate(priorDate.getDate() - 1);
+            const priorNames = new Set([prior.byung, prior.eung].filter(Boolean));
+            for (const emp of result.employees || []) {
+              if (priorNames.has(emp.name)) {
+                lastSeen.set(emp.id, new Date(priorDate));
+              }
+            }
+          }
+          const schedule = result.schedule || [];
+          for (const cell of schedule) {
+            const date = new Date(cell.date);
+            for (const duty of (cell.duties || [])) {
+              const prevDate = lastSeen.get(duty.id);
+              if (prevDate) {
+                const diffDays = Math.round((date - prevDate) / 86400000);
+                if (diffDays === 2) {
+                  counts.set(duty.id, (counts.get(duty.id) || 0) + 1);
+                }
+              }
+              lastSeen.set(duty.id, date);
+            }
+          }
+          return counts;
+        }
+
+        function calculateGapPenalty(result, perClassScore) {
+          const counts = computeGapPenaltyCounts(result);
+          if (!counts.size) return 0;
+          let score = 0;
+          const empById = new Map(result.employees.map((e) => [e.id, e]));
+          for (const [id, count] of counts.entries()) {
+            const klass = empById.get(id)?.klass || '기타';
+            const conf = (weights.perClass?.[klass]) || {};
+            const gap = conf.gapPenalty ?? weights.global.gapPenalty ?? 0;
+            if (!gap) continue;
+            const add = gap * count;
+            score += add;
+            if (perClassScore) perClassScore.set(klass, (perClassScore.get(klass) || 0) + add);
+          }
+          return score;
+        }
+
         function stitchSchedulesByClass({ classes, bestByClass, base }) {
           try {
             const baseRes = base?.result || base;
@@ -547,7 +600,9 @@ async function onGenerate() {
 
             // Re-score merged result
             const perClassScore = new Map();
-            const totalScore = calculateHourScore(result, perClassScore) + calculateCarryoverScore(result, perClassScore);
+            const totalScore = calculateHourScore(result, perClassScore)
+              + calculateCarryoverScore(result, perClassScore)
+              + calculateGapPenalty(result, perClassScore);
             return {
               passed: true,
               candidate: { result, totalScore, perClassScore },
@@ -636,7 +691,8 @@ function recomputeStatsInPlace(result) {
           const perClassScore = new Map();
           const hourScore = calculateHourScore(res, perClassScore);
           const carryoverScore = calculateCarryoverScore(res, perClassScore);
-          const totalScore = hourScore + carryoverScore;
+          const gapScore = calculateGapPenalty(res, perClassScore);
+          const totalScore = hourScore + carryoverScore + gapScore;
           return { result: res, totalScore, perClassScore };
         });
 
