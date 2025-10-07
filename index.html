@@ -101,7 +101,7 @@ R4 이동인"></textarea>
               <div>
                 <input type="checkbox" id="toggle-r1-cap" checked />
                 <label for="toggle-r1-cap">R1 주당 당직 상한 (2회)</label>
-                <small>같은 연차에 휴가자가 없더라도 R1은 한 주에 최대 2회까지만 배치합니다.</small>
+                <small>휴가자가 없으면 평일 2회까지만 배치하며, 공휴일이나 비상 상황에서는 자동으로 추가 배정될 수 있습니다.</small>
               </div>
               <div>
                 <input type="checkbox" id="toggle-r3-cap" checked />
@@ -157,19 +157,19 @@ R4 이동인"></textarea>
               </div>
               <div id="score-class-indicator" class="legend">현재: R1</div>
               <div><label for="score-overtime-soft" title="주간 근무시간이 72시간을 초과하고 75시간 미만일 때, 1건당 부과되는 점수입니다.">시간 초과 (72-75h) 점수</label><input type="number" id="score-overtime-soft" value="1" step="0.5" /></div>
-              <small>한 주 총 근무 시간이 72~75시간이면 여기서 지정한 패널티를 부과합니다.</small>
+              <small>한 주 총 근무 시간이 72~75시간이면 여기서 지정한 페널티를 부과합니다.</small>
               <div><label for="score-overtime-hard" title="주간 근무시간이 75시간 이상일 때, 1건당 부과되는 점수입니다.">고도 시간 초과 (>=75h) 점수</label><input type="number" id="score-overtime-hard" value="2" step="0.5" /></div>
-              <small>한 주에 75시간 이상 근무한 인원에게는 이 값만큼 추가 패널티가 부과됩니다.</small>
+              <small>한 주에 75시간 이상 근무한 인원에게는 이 값만큼 추가 페널티가 부과됩니다.</small>
               <div><label for="score-under-40" title="주간 근무시간이 40시간 미만일 때, 1건당 부과되는 점수입니다.">40h 미만 근무 주 점수</label><input type="number" id="score-under-40" value="1" step="0.5" /></div>
-              <small>주당 근무 시간이 40시간 아래로 떨어진 경우 균형을 맞추기 위한 벌점입니다.</small>
+              <small>주당 근무 시간이 40시간 아래로 떨어진 경우 균형을 맞추기 위한 페널티입니다.</small>
               <div><label for="score-dayoff-base" title="Day-off 편차가 1일일 때 부과되는 기본 점수입니다.">Day-off 편차 기본 점수</label><input type="number" id="score-dayoff-base" value="0.5" step="0.1" /></div>
-              <small>연차 내 평균 대비 Day-off 편차가 1일 있을 때 적용되는 기본 패널티입니다.</small>
+              <small>연차 내 평균 대비 Day-off 편차가 1일 있을 때 적용되는 기본 페널티입니다.</small>
               <div><label for="score-dayoff-increment" title="Day-off 편차가 1일을 초과할 때 늘어나는 추가 점수입니다.">Day-off 편차 추가 점수</label><input type="number" id="score-dayoff-increment" value="1" step="0.1" /></div>
-              <small>Day-off 편차가 2일 이상 벌어질 때마다 누적되는 추가 패널티입니다.</small>
+              <small>Day-off 편차가 2일 이상 벌어질 때마다 누적되는 추가 페널티입니다.</small>
               <div><label for="score-role-base" title="병당/응당 역할 횟수가 1회 어긋났을 때 부과되는 기본 점수입니다.">역할 편차 기본 점수</label><input type="number" id="score-role-base" value="1" step="0.1" /></div>
-              <small>병당/응당 역할 횟수가 평균에서 1회 벗어났을 때 적용되는 기본 패널티입니다.</small>
+              <small>병당/응당 역할 횟수가 평균에서 1회 벗어났을 때 적용되는 기본 페널티입니다.</small>
               <div><label for="score-role-increment" title="역할 편차가 1회를 초과할 때 늘어나는 추가 점수입니다.">역할 편차 추가 점수</label><input type="number" id="score-role-increment" value="1" step="0.1" /></div>
-              <small>역할 편차가 2회 이상 벌어질 때마다 누적되는 추가 패널티입니다.</small>
+              <small>역할 편차가 2회 이상 벌어질 때마다 누적되는 추가 페널티입니다.</small>
 
             </div>
           </fieldset>
