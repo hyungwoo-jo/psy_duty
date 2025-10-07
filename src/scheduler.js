@@ -44,6 +44,7 @@ function prepareContext(params) {
     dayoffWishByName = {},
     vacationDaysByName = {},
     priorDayDuty = { byung: '', eung: '' },
+    prior2DayDuty = { byung: '', eung: '' },
     optimization = 'medium',
     weekdaySlots = 2,
     weekendSlots = 2,
@@ -187,6 +188,7 @@ function prepareContext(params) {
     weekKeys,
     employees: employeesWithMeta,
     priorDayDuty,
+    prior2DayDuty,
     dayoffWishes,
     capBy,
     capEu,
@@ -742,7 +744,7 @@ function roleCapConstraint(personId, role) {
 }
 
 function buildResultFromSolution({ ctx, assignmentVars, underfillVars, solution, elapsedMs }) {
-  const { days, holidaySet, start, weekMode, employees, priorDayDuty } = ctx;
+  const { days, holidaySet, start, weekMode, employees, priorDayDuty, prior2DayDuty } = ctx;
 
   const schedule = days.map((date) => ({
     date,
@@ -824,6 +826,7 @@ function buildResultFromSolution({ ctx, assignmentVars, underfillVars, solution,
       weekendSlots: ctx.weekendSlots,
       roleHardcapMode: ctx.roleHardcapMode,
       priorDayDuty,
+      prior2DayDuty,
     },
     randomSeed: null,
     warnings,
@@ -838,7 +841,7 @@ function buildResultFromSolution({ ctx, assignmentVars, underfillVars, solution,
 }
 
 function rebuildLedger({ ctx, schedule }) {
-  const { weekKeys, start, weekMode, holidaySet, employees, priorDayDuty } = ctx;
+  const { weekKeys, start, weekMode, holidaySet, employees, priorDayDuty, prior2DayDuty } = ctx;
   const people = employees.map((p) => ({
     ...p,
     weeklyHours: Object.fromEntries(weekKeys.map((wk) => [wk, 0])),

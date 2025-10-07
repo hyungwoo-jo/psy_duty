@@ -191,6 +191,20 @@ R4 이동인"></textarea>
           <div class="legend">전날이 주말/공휴일이면 시작일은 Day-off(정규/당직 제외)로 처리됩니다.</div>
         </div>
       </div>
+      <div class="field field--full">
+        <label>전전일 당직(시작일 이틀 전): 예) 월요일 시작 시 전전날(토요일) 당직자를 지정하세요</label>
+        <div style="display:flex; gap:10px; flex-wrap: wrap; align-items: center;">
+          <div>
+            <div class="legend">전전일 병당</div>
+            <input id="prior2-byung" type="text" placeholder="이름" />
+          </div>
+          <div>
+            <div class="legend">전전일 응당</div>
+            <input id="prior2-eung" type="text" placeholder="이름" />
+          </div>
+          <div class="legend">A+2 반복 근무 페널티 계산 시 전전일 당직자를 고려합니다.</div>
+        </div>
+      </div>
       <div class="field">
         <label for="ics-version">ICS 버전명(예: v3)</label>
         <input id="ics-version" type="text" placeholder="v1" />

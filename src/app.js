@@ -19,6 +19,8 @@ const dayoffWishInput = document.querySelector('#dayoff-wish');
 const vacationsInput = document.querySelector('#vacations');
 const priorByungInput = document.querySelector('#prior-byung');
 const priorEungInput = document.querySelector('#prior-eung');
+const prior2ByungInput = document.querySelector('#prior2-byung');
+const prior2EungInput = document.querySelector('#prior2-eung');
 const previousStatsUIRoot = document.querySelector('#prev-stats-ui');
 const loadingOverlay = document.querySelector('#loading-overlay');
 const loadingTextEl = loadingOverlay ? loadingOverlay.querySelector('.loading-text') : null;
@@ -314,6 +316,7 @@ async function onGenerate() {
       const weekdaySlots = 2;
       const vacations = parseVacationRanges(vacationsInput.value);
       const prior = getPriorDayDutyFromUI();
+      const prior2 = getPrior2DayDutyFromUI();
 
       // --- Read ILP rule toggles from UI ---
       const enforceR1Cap = readToggle(toggleR1Cap);
@@ -340,6 +343,7 @@ async function onGenerate() {
           dayoffWishByName: enforceDayoffWishRule ? Object.fromEntries(dayoffWish) : {},
           vacationDaysByName: enforceVacationExclusion ? Object.fromEntries(vacations) : {},
           priorDayDuty: prior,
+          prior2DayDuty: prior2,
           optimization,
           weekdaySlots,
           weekendSlots: 2,
@@ -509,6 +513,7 @@ async function onGenerate() {
           const lastSeen = new Map();
           const start = result.startDate ? new Date(result.startDate) : null;
           const prior = result.config?.priorDayDuty || {};
+          const prior2 = result.config?.prior2DayDuty || {};
           if (start) {
             const priorDate = new Date(start);
             priorDate.setDate(priorDate.getDate() - 1);
@@ -516,6 +521,17 @@ async function onGenerate() {
             for (const emp of result.employees || []) {
               if (priorNames.has(emp.name)) {
                 lastSeen.set(emp.id, new Date(priorDate));
+              }
+            }
+            const priorDate2 = new Date(start);
+            priorDate2.setDate(priorDate2.getDate() - 2);
+            const priorNames2 = new Set([prior2.byung, prior2.eung].filter(Boolean));
+            for (const emp of result.employees || []) {
+              if (priorNames2.has(emp.name)) {
+                const existing = lastSeen.get(emp.id);
+                if (!existing || existing > priorDate2) {
+                  lastSeen.set(emp.id, new Date(priorDate2));
+                }
               }
             }
           }
@@ -536,8 +552,16 @@ async function onGenerate() {
           return counts;
         }
 
-        function calculateGapPenalty(result, perClassScore) {
+        function getGapCounts(result) {
+          if (!result) return new Map();
           const counts = computeGapPenaltyCounts(result);
+          if (!result.meta) result.meta = {};
+          result.meta.gapCounts = Object.fromEntries([...counts.entries()].map(([k, v]) => [String(k), Number(v) || 0]));
+          return counts;
+        }
+
+        function calculateGapPenalty(result, perClassScore) {
+          const counts = getGapCounts(result);
           if (!counts.size) return 0;
           let score = 0;
           const empById = new Map(result.employees.map((e) => [e.id, e]));
@@ -626,66 +650,84 @@ async function onGenerate() {
 
 function recomputeStatsInPlace(result) {
   const holidays = new Set(result.holidays || []);
-  const empById = new Map(result.employees.map((e) => [e.id, e]));
-  const people = result.employees.map((e) => ({ id: e.id, name: e.name, weeklyHours: {}, totalHours: 0 }));
-  const byId = new Map(people.map((p) => [p.id, p]));
+  const employees = result.employees || [];
+  const schedule = result.schedule || [];
+  const people = employees.map((e) => ({ id: e.id, name: e.name, weeklyHours: {}, totalHours: 0, gapA2: 0 }));
 
-  // Build day-off keys: next day workday after duty
   const dayOffKeysById = new Map(people.map((p) => [p.id, new Set()]));
   const prior = result.config?.priorDayDuty || {};
+  const prior2 = result.config?.prior2DayDuty || {};
   const priorNames = new Set([prior.byung, prior.eung].filter(Boolean));
-  if (result.schedule.length > 0) {
-    const firstDay = result.schedule[0];
-    const firstDate = new Date(firstDay.date);
-    const firstKey = fmtDate(firstDate);
-    const wd = firstDate.getDay();
-    const isWorkday = (wd >= 1 && wd <= 5) && !holidays.has(firstKey);
-    if (isWorkday && priorNames.size) {
-      for (const emp of result.employees) {
+  const prior2Names = new Set([prior2.byung, prior2.eung].filter(Boolean));
+
+  const isWorkday = (date) => {
+    const key = fmtDate(date);
+    const wd = date.getDay();
+    return wd >= 1 && wd <= 5 && !holidays.has(key);
+  };
+
+  if (schedule.length > 0) {
+    const firstDate = new Date(schedule[0].date);
+    if (isWorkday(firstDate) && priorNames.size) {
+      for (const emp of employees) {
         if (priorNames.has(emp.name)) {
-          dayOffKeysById.get(emp.id)?.add(firstKey);
+          dayOffKeysById.get(emp.id)?.add(fmtDate(firstDate));
+        }
+      }
+    }
+    const prevDate = new Date(firstDate);
+    prevDate.setDate(prevDate.getDate() - 1);
+    if (isWorkday(prevDate) && prior2Names.size) {
+      for (const emp of employees) {
+        if (prior2Names.has(emp.name)) {
+          dayOffKeysById.get(emp.id)?.add(fmtDate(prevDate));
         }
       }
     }
   }
-  for (let i = 0; i < result.schedule.length; i += 1) {
-    const cell = result.schedule[i];
-    const next = result.schedule[i + 1];
+
+  for (let i = 0; i < schedule.length; i += 1) {
+    const cell = schedule[i];
+    const next = schedule[i + 1];
     if (!next) continue;
     const nextDate = new Date(next.date);
-            const wd = nextDate.getDay();
-            const key = fmtDate(nextDate);
-            const isWorkday = (wd >= 1 && wd <= 5) && !holidays.has(key);
-            if (!isWorkday) continue;
-            for (const d of (cell.duties || [])) dayOffKeysById.get(d.id)?.add(key);
-          }
+    if (!isWorkday(nextDate)) continue;
+    const key = fmtDate(nextDate);
+    for (const duty of (cell.duties || [])) {
+      dayOffKeysById.get(duty.id)?.add(key);
+    }
+  }
 
-          for (const cell of result.schedule) {
-            const date = new Date(cell.date);
-            const key = fmtDate(date);
-            const wkKey = weekKey(date);
-            const wd = date.getDay();
-            const isWorkday = (wd >= 1 && wd <= 5) && !holidays.has(key);
-            const dutyIds = new Set((cell.duties || []).map((d) => d.id));
+  for (const cell of schedule) {
+    const date = new Date(cell.date);
+    const key = fmtDate(date);
+    const wkKey = weekKey(date);
+    const workday = isWorkday(date);
+    const dutyIds = new Set((cell.duties || []).map((d) => d.id));
 
-            for (const p of people) {
-              let h = 0;
-              const isOnDuty = dutyIds.has(p.id);
-              const isDayOff = dayOffKeysById.get(p.id)?.has(key);
-              if (isWorkday) {
-                if (!isDayOff) h += 8;
-                if (isOnDuty) h += 13.5;
-              } else {
-                if (isOnDuty) h += 21;
-              }
-              if (h > 0) {
-                p.weeklyHours[wkKey] = (p.weeklyHours[wkKey] || 0) + h;
-                p.totalHours += h;
-              }
-            }
-          }
-          result.stats = people;
-        }
+    for (const person of people) {
+      let h = 0;
+      const isOnDuty = dutyIds.has(person.id);
+      const hasDayOff = dayOffKeysById.get(person.id)?.has(key);
+      if (workday) {
+        if (!hasDayOff) h += 8;
+        if (isOnDuty) h += 13.5;
+      } else if (isOnDuty) {
+        h += 21;
+      }
+      if (h > 0) {
+        person.weeklyHours[wkKey] = (person.weeklyHours[wkKey] || 0) + h;
+        person.totalHours += h;
+      }
+    }
+  }
+
+  result.stats = people;
+  const gapCounts = getGapCounts(result);
+  for (const person of people) {
+    person.gapA2 = Number(gapCounts.get(person.id) || 0);
+  }
+}
 
         const scoredResults = finalResults.map((res) => {
           const perClassScore = new Map();
@@ -860,6 +902,47 @@ function renderReport(result, opts = {}) {
 
   // carry-over 통계 (stat-to-pass)
   renderCarryoverStats(result, opts);
+  renderGapDetails(result);
+}
+
+function renderGapDetails(result) {
+  const stats = result.stats || [];
+  const highlight = stats.filter((s) => Number(s.gapA2 || 0) > 0);
+  if (highlight.length === 0) return;
+  const wrap = document.createElement('details');
+  wrap.open = false;
+  const summary = document.createElement('summary');
+  summary.textContent = 'A+2 반복 근무 현황';
+  wrap.appendChild(summary);
+
+  const table = document.createElement('table');
+  table.className = 'report-table';
+  const thead = document.createElement('thead');
+  const thr = document.createElement('tr');
+  ['이름','연차','A+2 횟수'].forEach((h) => {
+    const th = document.createElement('th');
+    th.textContent = h;
+    thr.appendChild(th);
+  });
+  thead.appendChild(thr);
+  table.appendChild(thead);
+  const tbody = document.createElement('tbody');
+  const empById = new Map(result.employees.map((e) => [e.id, e]));
+  for (const stat of highlight) {
+    const tr = document.createElement('tr');
+    const klass = empById.get(stat.id)?.klass || '';
+    const cells = [stat.name, klass, Number(stat.gapA2 || 0)];
+    cells.forEach((val, idx) => {
+      const td = document.createElement('td');
+      td.textContent = String(val);
+      if (idx === 2) td.classList.add('num');
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+  wrap.appendChild(table);
+  report.appendChild(wrap);
 }
 
 function renderScoreBreakdown(candidate) {
@@ -1531,6 +1614,12 @@ function parseVacationRanges(text) {
 function getPriorDayDutyFromUI() {
   const byung = (priorByungInput?.value || '').trim();
   const eung = (priorEungInput?.value || '').trim();
+  return { byung, eung };
+}
+
+function getPrior2DayDutyFromUI() {
+  const byung = (prior2ByungInput?.value || '').trim();
+  const eung = (prior2EungInput?.value || '').trim();
   return { byung, eung };
 }
 
