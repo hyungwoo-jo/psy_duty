@@ -87,7 +87,7 @@ const SCORE_DEFAULTS = {
   dayoffIncrement: 1,
   roleBase: 1,
   roleIncrement: 1,
-  gapPenalty: 0,
+  gapPenalty: 0.5,
 };
 const SCORE_CLASSES = ['R1','R2','R3','R4'];
 let _scoreClass = 'R1';
@@ -766,7 +766,9 @@ function recomputeStatsInPlace(result) {
         renderSummary(lastResult);
         renderReport(lastResult, { previous: prev });
         renderRoster(lastResult);
-        try { renderScoreBreakdown(winner); } catch {}
+        if (isDiagnosticsEnabled()) {
+          try { renderScoreBreakdown(winner); } catch {}
+        }
         if (exportXlsxBtn) exportXlsxBtn.disabled = false;
         if (exportIcsBtn) exportIcsBtn.disabled = false;
 
@@ -902,24 +904,25 @@ function renderReport(result, opts = {}) {
 
   // carry-over 통계 (stat-to-pass)
   renderCarryoverStats(result, opts);
-  renderGapDetails(result);
+  if (isDiagnosticsEnabled()) renderGapDetails(result);
 }
 
 function renderGapDetails(result) {
+  if (!isDiagnosticsEnabled()) return;
   const stats = result.stats || [];
   const highlight = stats.filter((s) => Number(s.gapA2 || 0) > 0);
   if (highlight.length === 0) return;
   const wrap = document.createElement('details');
   wrap.open = false;
   const summary = document.createElement('summary');
-  summary.textContent = 'A+2 반복 근무 현황';
+  summary.textContent = '당직-휴무-당직(OFF 하나 간격) 반복 현황';
   wrap.appendChild(summary);
 
   const table = document.createElement('table');
   table.className = 'report-table';
   const thead = document.createElement('thead');
   const thr = document.createElement('tr');
-  ['이름','연차','A+2 횟수'].forEach((h) => {
+  ['이름','연차','반복 횟수'].forEach((h) => {
     const th = document.createElement('th');
     th.textContent = h;
     thr.appendChild(th);

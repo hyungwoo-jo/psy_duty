@@ -27,7 +27,7 @@
       </div>
       <div class="field">
         <label for="retry-attempts">재시도 횟수</label>
-        <input id="retry-attempts" type="number" min="1" value="50" />
+        <input id="retry-attempts" type="number" min="1" value="100" />
       </div>
       
       <!-- 당직 인원 고정: 병당 1, 응당 1 (UI 옵션 제거) -->
@@ -170,8 +170,8 @@ R4 이동인"></textarea>
               <small>병당/응당 역할 횟수가 평균에서 1회 벗어났을 때 적용되는 기본 페널티입니다.</small>
               <div><label for="score-role-increment" title="역할 편차가 1회를 초과할 때 늘어나는 추가 점수입니다.">역할 편차 추가 점수</label><input type="number" id="score-role-increment" value="1" step="0.1" /></div>
               <small>역할 편차가 2회 이상 벌어질 때마다 누적되는 추가 페널티입니다.</small>
-              <div><label for="score-gap2" title="같은 사람이 이틀 간격(A+2)으로 다시 당직에 투입될 때 부과되는 점수입니다.">A+2 반복 근무 페널티</label><input type="number" id="score-gap2" value="0" step="0.5" /></div>
-              <small>전전날 당직자가 이틀 간격으로 다시 배치될 때 적용되는 페널티입니다.</small>
+              <div><label for="score-gap2" title="당직-휴무-당직(OFF 하나 사이)로 반복될 때 부과되는 점수입니다.">OFF 하나 간격 반복(당직-휴무-당직) 페널티</label><input type="number" id="score-gap2" value="0.5" step="0.5" /></div>
+              <small>전날 한 번 쉬고 다시 당직에 투입되는 패턴을 줄이고 싶을 때 사용합니다.</small>
 
             </div>
           </fieldset>
@@ -202,7 +202,7 @@ R4 이동인"></textarea>
             <div class="legend">전전일 응당</div>
             <input id="prior2-eung" type="text" placeholder="이름" />
           </div>
-          <div class="legend">A+2 반복 근무 페널티 계산 시 전전일 당직자를 고려합니다.</div>
+          <div class="legend">당직-휴무-당직 패턴을 정확히 계산하기 위해 전전일 당직자 정보를 활용합니다.</div>
         </div>
       </div>
       <div class="field">
