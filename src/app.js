@@ -43,6 +43,7 @@ const scoreDayoffIncrement = document.querySelector('#score-dayoff-increment');
 const scoreRoleBase = document.querySelector('#score-role-base');
 const scoreRoleIncrement = document.querySelector('#score-role-increment');
 const scoreGapPenalty = document.querySelector('#score-gap2');
+const scoreFriSunPenalty = document.querySelector('#score-fri-sun');
 let roleHardcapMode = hardcapToggle?.dataset.mode === 'relaxed' ? 'relaxed' : 'strict';
 // 최적화 선택 UI 제거: 기본 strong
 // 주 계산 모드 옵션 제거: 달력 기준(월–일) 고정
@@ -88,6 +89,7 @@ const SCORE_DEFAULTS = {
   roleBase: 1,
   roleIncrement: 1,
   gapPenalty: 0.5,
+  friSunPenalty: 0.5,
 };
 const SCORE_CLASSES = ['R1','R2','R3','R4'];
 let _scoreClass = 'R1';
@@ -112,6 +114,7 @@ function getCurrentScoreInputs() {
     roleBase: readScoreInput(scoreRoleBase, SCORE_DEFAULTS.roleBase),
     roleIncrement: readScoreInput(scoreRoleIncrement, SCORE_DEFAULTS.roleIncrement),
     gapPenalty: readScoreInput(scoreGapPenalty, SCORE_DEFAULTS.gapPenalty),
+    friSunPenalty: readScoreInput(scoreFriSunPenalty, SCORE_DEFAULTS.friSunPenalty),
   };
 }
 
@@ -125,6 +128,7 @@ function setCurrentScoreInputs(cfg) {
   scoreRoleBase.value = cfg.roleBase;
   scoreRoleIncrement.value = cfg.roleIncrement;
   if (scoreGapPenalty) scoreGapPenalty.value = cfg.gapPenalty;
+  if (scoreFriSunPenalty) scoreFriSunPenalty.value = cfg.friSunPenalty;
 }
 
 function ensureScoreConfigs() {
@@ -577,6 +581,63 @@ async function onGenerate() {
           return score;
         }
 
+        function computeFriSunComboCounts(result) {
+          const counts = new Map();
+          if (!result) return counts;
+          const schedule = result.schedule || [];
+          const weekly = new Map(); // weekKey -> { fri:Set, sun:Set }
+          for (const cell of schedule) {
+            if (!cell?.duties?.length) continue;
+            const date = new Date(cell.date);
+            const day = date.getDay();
+            if (day !== 5 && day !== 0) continue; // 5: Fri, 0: Sun
+            const wk = weekKey(date);
+            if (!weekly.has(wk)) {
+              weekly.set(wk, { fri: new Set(), sun: new Set() });
+            }
+            const bucket = weekly.get(wk);
+            const targetSet = day === 5 ? bucket.fri : bucket.sun;
+            for (const duty of cell.duties) {
+              if (duty?.id == null) continue;
+              targetSet.add(duty.id);
+            }
+          }
+          for (const bucket of weekly.values()) {
+            if (!bucket.fri.size || !bucket.sun.size) continue;
+            for (const id of bucket.fri) {
+              if (bucket.sun.has(id)) {
+                counts.set(id, (counts.get(id) || 0) + 1);
+              }
+            }
+          }
+          return counts;
+        }
+
+        function getFriSunCounts(result) {
+          if (!result) return new Map();
+          const counts = computeFriSunComboCounts(result);
+          if (!result.meta) result.meta = {};
+          result.meta.friSunComboCounts = Object.fromEntries([...counts.entries()].map(([k, v]) => [String(k), Number(v) || 0]));
+          return counts;
+        }
+
+        function calculateFriSunPenalty(result, perClassScore) {
+          const counts = getFriSunCounts(result);
+          if (!counts.size) return 0;
+          let score = 0;
+          const empById = new Map(result.employees.map((e) => [e.id, e]));
+          for (const [id, count] of counts.entries()) {
+            const klass = empById.get(id)?.klass || '기타';
+            const conf = (weights.perClass?.[klass]) || {};
+            const penalty = conf.friSunPenalty ?? weights.global.friSunPenalty ?? 0;
+            if (!penalty || !count) continue;
+            const add = penalty * count;
+            score += add;
+            if (perClassScore) perClassScore.set(klass, (perClassScore.get(klass) || 0) + add);
+          }
+          return score;
+        }
+
         function stitchSchedulesByClass({ classes, bestByClass, base }) {
           try {
             const baseRes = base?.result || base;
@@ -626,7 +687,8 @@ async function onGenerate() {
             const perClassScore = new Map();
             const totalScore = calculateHourScore(result, perClassScore)
               + calculateCarryoverScore(result, perClassScore)
-              + calculateGapPenalty(result, perClassScore);
+              + calculateGapPenalty(result, perClassScore)
+              + calculateFriSunPenalty(result, perClassScore);
             return {
               passed: true,
               candidate: { result, totalScore, perClassScore },
@@ -734,7 +796,8 @@ function recomputeStatsInPlace(result) {
           const hourScore = calculateHourScore(res, perClassScore);
           const carryoverScore = calculateCarryoverScore(res, perClassScore);
           const gapScore = calculateGapPenalty(res, perClassScore);
-          const totalScore = hourScore + carryoverScore + gapScore;
+          const friSunScore = calculateFriSunPenalty(res, perClassScore);
+          const totalScore = hourScore + carryoverScore + gapScore + friSunScore;
           return { result: res, totalScore, perClassScore };
         });
 
