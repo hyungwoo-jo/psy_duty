@@ -89,7 +89,7 @@ const SCORE_DEFAULTS = {
   roleBase: 1,
   roleIncrement: 1,
   gapPenalty: 0.5,
-  friSunPenalty: 0.5,
+  friSunPenalty: 1,
 };
 const SCORE_CLASSES = ['R1','R2','R3','R4'];
 let _scoreClass = 'R1';
