@@ -42,6 +42,7 @@ const scoreDayoffBase = document.querySelector('#score-dayoff-base');
 const scoreDayoffIncrement = document.querySelector('#score-dayoff-increment');
 const scoreRoleBase = document.querySelector('#score-role-base');
 const scoreRoleIncrement = document.querySelector('#score-role-increment');
+const scoreRoleSpread = document.querySelector('#score-role-spread');
 const scoreGapPenalty = document.querySelector('#score-gap2');
 const scoreFriSunPenalty = document.querySelector('#score-fri-sun');
 let roleHardcapMode = hardcapToggle?.dataset.mode === 'relaxed' ? 'relaxed' : 'strict';
@@ -88,6 +89,7 @@ const SCORE_DEFAULTS = {
   dayoffIncrement: 1,
   roleBase: 1,
   roleIncrement: 1,
+  roleSpread: 1,
   gapPenalty: 0.5,
   friSunPenalty: 1,
 };
@@ -113,6 +115,7 @@ function getCurrentScoreInputs() {
     dayoffIncrement: readScoreInput(scoreDayoffIncrement, SCORE_DEFAULTS.dayoffIncrement),
     roleBase: readScoreInput(scoreRoleBase, SCORE_DEFAULTS.roleBase),
     roleIncrement: readScoreInput(scoreRoleIncrement, SCORE_DEFAULTS.roleIncrement),
+    roleSpread: readScoreInput(scoreRoleSpread, SCORE_DEFAULTS.roleSpread),
     gapPenalty: readScoreInput(scoreGapPenalty, SCORE_DEFAULTS.gapPenalty),
     friSunPenalty: readScoreInput(scoreFriSunPenalty, SCORE_DEFAULTS.friSunPenalty),
   };
@@ -127,6 +130,7 @@ function setCurrentScoreInputs(cfg) {
   scoreDayoffIncrement.value = cfg.dayoffIncrement;
   scoreRoleBase.value = cfg.roleBase;
   scoreRoleIncrement.value = cfg.roleIncrement;
+  if (scoreRoleSpread) scoreRoleSpread.value = cfg.roleSpread;
   if (scoreGapPenalty) scoreGapPenalty.value = cfg.gapPenalty;
   if (scoreFriSunPenalty) scoreFriSunPenalty.value = cfg.friSunPenalty;
 }
@@ -496,15 +500,26 @@ async function onGenerate() {
                 count: (Number(role.countMap.get(p.id) || 0)) + (prevByName.get(p.name) || 0),
               }));
               const { deltas } = computeCarryoverDeltas(finalCounts);
+              const wClass = (weights.perClass?.[klass]) || {};
+              let hasPlusOne = false;
+              let hasMinusOne = false;
               for (const d of deltas) {
                 const deltaAbs = Math.abs(d.delta);
-                const wClass = (weights.perClass?.[klass]) || {};
                 const add = role.key === 'off'
                   ? applyPenalty(deltaAbs, (wClass.dayoffBase ?? weights.global.dayoffBase), (wClass.dayoffIncrement ?? weights.global.dayoffIncrement))
                   : applyPenalty(deltaAbs, (wClass.roleBase ?? weights.global.roleBase), (wClass.roleIncrement ?? weights.global.roleIncrement));
                 if (add) {
                   score += add;
                   if (perClassScore) perClassScore.set(klass, (perClassScore.get(klass) || 0) + add);
+                }
+                if (d.delta === 1) hasPlusOne = true;
+                else if (d.delta === -1) hasMinusOne = true;
+              }
+              if (role.key !== 'off' && hasPlusOne && hasMinusOne) {
+                const spreadPenalty = (wClass.roleSpread ?? weights.global.roleSpread);
+                if (spreadPenalty) {
+                  score += spreadPenalty;
+                  if (perClassScore) perClassScore.set(klass, (perClassScore.get(klass) || 0) + spreadPenalty);
                 }
               }
             }
