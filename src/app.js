@@ -27,6 +27,7 @@ const loadingTextEl = loadingOverlay ? loadingOverlay.querySelector('.loading-te
 const icsVersionInput = document.querySelector('#ics-version');
 const icsPreview = document.querySelector('#ics-preview');
 const hardcapToggle = document.querySelector('#role-hardcap-toggle');
+const hardcapModeLabel = document.querySelector('#role-hardcap-mode-label');
 const toggleR1Cap = document.querySelector('#toggle-r1-cap');
 const toggleR3Cap = document.querySelector('#toggle-r3-cap');
 const toggleR2Min = document.querySelector('#toggle-r2-min');
@@ -45,7 +46,7 @@ const scoreRoleIncrement = document.querySelector('#score-role-increment');
 const scoreRoleSpread = document.querySelector('#score-role-spread');
 const scoreGapPenalty = document.querySelector('#score-gap2');
 const scoreFriSunPenalty = document.querySelector('#score-fri-sun');
-let roleHardcapMode = hardcapToggle?.dataset.mode === 'relaxed' ? 'relaxed' : 'strict';
+let roleHardcapMode = hardcapToggle?.checked ? 'relaxed' : 'strict';
 // 최적화 선택 UI 제거: 기본 strong
 // 주 계산 모드 옵션 제거: 달력 기준(월–일) 고정
 // 당직 슬롯 고정: 병당 1, 응당 1
@@ -74,8 +75,8 @@ runOnReady(bindScoreClassTabs);
   weeksInput?.addEventListener(ev, updateIcsPreview);
   icsVersionInput?.addEventListener(ev, updateIcsPreview);
 });
-hardcapToggle?.addEventListener('click', () => {
-  setRoleHardcapMode(roleHardcapMode === 'strict' ? 'relaxed' : 'strict');
+hardcapToggle?.addEventListener('change', () => {
+  setRoleHardcapMode(hardcapToggle.checked ? 'relaxed' : 'strict');
 });
 // 공휴일 도우미 버튼
 document.querySelector('#load-kr-holidays')?.addEventListener('click', () => loadKRHolidays({ merge: true }));
@@ -208,9 +209,12 @@ function setRoleHardcapMode(mode) {
 function updateHardcapToggleLabel() {
   if (!hardcapToggle) return;
   const relaxed = roleHardcapMode === 'relaxed';
-  hardcapToggle.dataset.mode = roleHardcapMode;
-  hardcapToggle.textContent = relaxed ? '완화 모드 (±2 허용)' : '기본 (±1)';
-  hardcapToggle.setAttribute('aria-pressed', relaxed ? 'true' : 'false');
+  hardcapToggle.checked = relaxed;
+  if (hardcapModeLabel) {
+    hardcapModeLabel.textContent = relaxed
+      ? '현재: 완화 모드 — 역할 편차를 ±2까지 허용합니다. (체크 해제 시 ±1입니다.)'
+      : '현재: 기본 모드 — 역할 편차 허용 범위는 ±1입니다. (체크 시 ±2까지 완화됩니다.)';
+  }
 }
 
 function runOnReady(fn) {
