@@ -385,7 +385,20 @@ async function onGenerate() {
       };
       const MAX_ATTEMPTS = getRetryCount();
       const results = [];
+      let autoRelaxMessageShown = false;
       appendMessage(`총 ${MAX_ATTEMPTS}번의 생성을 시도하여 72시간 초과가 없는 최적의 해를 찾습니다...`);
+
+      const attemptWithConstraints = async (mode) => {
+        try {
+          return await runSchedule(mode, undefined, enforceR3Cap, enforceR1Cap, 'strict');
+        } catch (err) {
+          try {
+            return await runSchedule(mode, undefined, enforceR3Cap, false, 'strict');
+          } catch {
+            return await runSchedule(mode, undefined, enforceR3Cap, false, 'none');
+          }
+        }
+      };
 
       const runAttempt = async (attemptNum) => {
         if (attemptNum > MAX_ATTEMPTS) {
@@ -394,21 +407,31 @@ async function onGenerate() {
         }
 
         try {
+          const modes = roleHardcapMode === 'strict' ? ['strict', 'relaxed'] : [roleHardcapMode];
           let currentResult = null;
-          
-          // --- Constraint Dropping Architecture ---
-          try {
-            // First attempt with UI settings
-            currentResult = await runSchedule(roleHardcapMode, undefined, enforceR3Cap, enforceR1Cap, 'strict');
-          } catch (e) {
+          let usedMode = roleHardcapMode;
+          let lastError = null;
+
+          for (const mode of modes) {
             try {
-              // Fallback 1: Drop R1 cap
-              currentResult = await runSchedule(roleHardcapMode, undefined, enforceR3Cap, false, 'strict');
-            } catch (e2) {
-              // Fallback 2: Drop R1 cap and relax hour mode
-              currentResult = await runSchedule(roleHardcapMode, undefined, enforceR3Cap, false, 'none');
+              currentResult = await attemptWithConstraints(mode);
+              usedMode = mode;
+              break;
+            } catch (error) {
+              lastError = error;
             }
           }
+
+          if (!currentResult) throw lastError;
+
+          if (usedMode === 'relaxed' && roleHardcapMode !== 'relaxed') {
+            setRoleHardcapMode('relaxed');
+            if (!autoRelaxMessageShown) {
+              appendMessage('기본 모드(±1)로는 스케줄 생성에 실패하여 자동으로 완화 모드(±2)로 전환했습니다.');
+              autoRelaxMessageShown = true;
+            }
+          }
+
           results.push(currentResult);
         } catch (err) {
           const detailedError = `오류 발생: ${err.message}\n\nStack Trace:\n${err.stack}`;
