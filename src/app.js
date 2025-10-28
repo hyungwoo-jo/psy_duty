@@ -33,6 +33,7 @@ const toggleR3Cap = document.querySelector('#toggle-r3-cap');
 const toggleR2Min = document.querySelector('#toggle-r2-min');
 const toggleR3Balance = document.querySelector('#toggle-r3-balance');
 const toggleDayoffWish = document.querySelector('#toggle-dayoff-wish');
+const toggleDayoffCounting = document.querySelector('#toggle-dayoff-trailing');
 const toggleR3PediatricWed = document.querySelector('#toggle-r3-ped-wed');
 const toggleVacationBan = document.querySelector('#toggle-vacation-ban');
 const toggleUnavailableBan = document.querySelector('#toggle-unavailable-ban');
@@ -47,6 +48,7 @@ const scoreRoleSpread = document.querySelector('#score-role-spread');
 const scoreGapPenalty = document.querySelector('#score-gap2');
 const scoreFriSunPenalty = document.querySelector('#score-fri-sun');
 let roleHardcapMode = hardcapToggle?.checked ? 'relaxed' : 'strict';
+let dayoffCountingMode = toggleDayoffCounting?.checked ? 'trailing' : 'leading';
 // 최적화 선택 UI 제거: 기본 strong
 // 주 계산 모드 옵션 제거: 달력 기준(월–일) 고정
 // 당직 슬롯 고정: 병당 1, 응당 1
@@ -77,6 +79,9 @@ runOnReady(bindScoreClassTabs);
 });
 hardcapToggle?.addEventListener('change', () => {
   setRoleHardcapMode(hardcapToggle.checked ? 'relaxed' : 'strict');
+});
+toggleDayoffCounting?.addEventListener('change', () => {
+  setDayoffCountingMode(toggleDayoffCounting.checked ? 'trailing' : 'leading');
 });
 // 공휴일 도우미 버튼
 document.querySelector('#load-kr-holidays')?.addEventListener('click', () => loadKRHolidays({ merge: true }));
@@ -204,6 +209,13 @@ function getWeeksCount() {
 function setRoleHardcapMode(mode) {
   roleHardcapMode = mode;
   updateHardcapToggleLabel();
+}
+
+function setDayoffCountingMode(mode) {
+  dayoffCountingMode = mode;
+  if (toggleDayoffCounting) {
+    toggleDayoffCounting.checked = mode === 'trailing';
+  }
 }
 
 function updateHardcapToggleLabel() {
@@ -373,6 +385,7 @@ async function onGenerate() {
           enforceUnavailableExclusion,
           enforceDayoffBalance,
           weeklyHourCapMode: hourCap,
+          dayoffCountingMode,
         };
         return generateSchedule(args);
       };
@@ -763,6 +776,7 @@ function recomputeStatsInPlace(result) {
   const prior2 = result.config?.prior2DayDuty || {};
   const priorNames = new Set([prior.byung, prior.eung].filter(Boolean));
   const prior2Names = new Set([prior2.byung, prior2.eung].filter(Boolean));
+  const dayoffMode = result.config?.dayoffCountingMode || 'leading';
 
   const isWorkday = (date) => {
     const key = fmtDate(date);
@@ -770,7 +784,7 @@ function recomputeStatsInPlace(result) {
     return wd >= 1 && wd <= 5 && !holidays.has(key);
   };
 
-  if (schedule.length > 0) {
+  if (dayoffMode === 'leading' && schedule.length > 0) {
     const firstDate = new Date(schedule[0].date);
     if (isWorkday(firstDate) && priorNames.size) {
       for (const emp of employees) {
@@ -792,11 +806,15 @@ function recomputeStatsInPlace(result) {
 
   for (let i = 0; i < schedule.length; i += 1) {
     const cell = schedule[i];
-    const next = schedule[i + 1];
-    if (!next) continue;
-    const nextDate = new Date(next.date);
-    if (!isWorkday(nextDate)) continue;
-    const key = fmtDate(nextDate);
+    let targetDate = null;
+    if (dayoffMode === 'trailing') {
+      targetDate = addDays(new Date(cell.date), 1);
+    } else {
+      const next = schedule[i + 1];
+      if (next) targetDate = new Date(next.date);
+    }
+    if (!targetDate || !isWorkday(targetDate)) continue;
+    const key = fmtDate(targetDate);
     for (const duty of (cell.duties || [])) {
       dayOffKeysById.get(duty.id)?.add(key);
     }
@@ -1951,6 +1969,7 @@ function computeRoleAndOffCounts(result) {
   const eungCount = new Map();
   const dayOff = new Map();
   const holidays = new Set(result.holidays || []);
+  const mode = result.config?.dayoffCountingMode || 'leading';
 
   const isWorkdayLocal = (date) => {
     const d = new Date(date);
@@ -1960,7 +1979,7 @@ function computeRoleAndOffCounts(result) {
   };
 
   // Fix: Account for prior day duty causing a day-off on the first day
-  if (result.schedule.length > 0) {
+  if (mode === 'leading' && result.schedule.length > 0) {
     const firstDay = result.schedule[0];
     if (isWorkdayLocal(firstDay.date)) {
       const priorDutyNames = new Set([result.config.priorDayDuty?.byung, result.config.priorDayDuty?.eung].filter(Boolean));
@@ -1975,12 +1994,18 @@ function computeRoleAndOffCounts(result) {
 
   for (let i = 0; i < result.schedule.length; i += 1) {
     const cell = result.schedule[i];
-    const next = result.schedule[i + 1];
     if (cell.duties && cell.duties.length) {
       const b = cell.duties[0]; if (b) byungCount.set(b.id, (byungCount.get(b.id) || 0) + 1);
       const e = cell.duties[1]; if (e) eungCount.set(e.id, (eungCount.get(e.id) || 0) + 1);
     }
-    if (next && isWorkdayLocal(next.date)) {
+    let targetDate = null;
+    if (mode === 'trailing') {
+      targetDate = addDays(new Date(cell.date), 1);
+    } else {
+      const next = result.schedule[i + 1];
+      if (next) targetDate = new Date(next.date);
+    }
+    if (targetDate && isWorkdayLocal(targetDate)) {
       for (const d of (cell.duties || [])) dayOff.set(d.id, (dayOff.get(d.id) || 0) + 1);
     }
   }

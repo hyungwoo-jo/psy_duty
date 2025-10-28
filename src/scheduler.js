@@ -50,6 +50,7 @@ function prepareContext(params) {
     weekendSlots = 2,
     timeBudgetMs = 2000,
     roleHardcapMode = 'strict',
+    dayoffCountingMode = 'leading',
     prevStats = null,
     randomSeed = null,
     enforceR3WeeklyCap = false,
@@ -216,6 +217,7 @@ function prepareContext(params) {
     enforceUnavailableExclusion,
     weeklyHourCapMode,
     unavoidableWeekKeys,
+    dayoffCountingMode,
   };
 }
 
@@ -825,6 +827,7 @@ function buildResultFromSolution({ ctx, assignmentVars, underfillVars, solution,
       weekdaySlots: ctx.weekdaySlots,
       weekendSlots: ctx.weekendSlots,
       roleHardcapMode: ctx.roleHardcapMode,
+      dayoffCountingMode: ctx.dayoffCountingMode,
       priorDayDuty,
       prior2DayDuty,
     },
@@ -841,7 +844,16 @@ function buildResultFromSolution({ ctx, assignmentVars, underfillVars, solution,
 }
 
 function rebuildLedger({ ctx, schedule }) {
-  const { weekKeys, start, weekMode, holidaySet, employees, priorDayDuty, prior2DayDuty } = ctx;
+  const {
+    weekKeys,
+    start,
+    weekMode,
+    holidaySet,
+    employees,
+    priorDayDuty,
+    prior2DayDuty,
+    dayoffCountingMode = 'leading',
+  } = ctx;
   const people = employees.map((p) => ({
     ...p,
     weeklyHours: Object.fromEntries(weekKeys.map((wk) => [wk, 0])),
@@ -853,7 +865,7 @@ function rebuildLedger({ ctx, schedule }) {
   const byId = new Map(people.map((p) => [p.id, p]));
 
   // Step 1: Determine all day-offs first.
-  if (priorDayDuty) {
+  if (priorDayDuty && dayoffCountingMode === 'leading') {
     const names = new Set([priorDayDuty.byung, priorDayDuty.eung].filter(Boolean));
     if (names.size > 0 && ctx.days.length > 0) {
       const firstDay = ctx.days[0];
