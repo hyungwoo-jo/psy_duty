@@ -63,6 +63,7 @@ function prepareContext(params) {
     enforceR3PediatricWedBan = true,
     enforceVacationExclusion = true,
     enforceUnavailableExclusion = true,
+    excludeR4Mode = false,
   } = params || {};
 
   if (!employees || employees.length < 2) {
@@ -154,6 +155,10 @@ function prepareContext(params) {
     roleHardcapMode,
     weekdaySlots,
     weekendSlots,
+    excludeR4Mode,
+    weekKeys,
+    start,
+    weekMode,
   });
 
   const r1s = employeesWithMeta.filter(p => p.klass === 'R1');
@@ -165,10 +170,14 @@ function prepareContext(params) {
       r1SlotsPerWeek.set(wk, 0);
     }
 
+    const weekKeyToIndex = new Map();
+    weekKeys.forEach((wk, idx) => weekKeyToIndex.set(wk, idx));
+
     for (const date of days) {
       const wk = weekKeyByMode(date, start, weekMode);
+      const widx = weekKeyToIndex.get(wk) || 0;
       for (let slot = 0; slot < 2; slot += 1) {
-        if (requiredClassFor(date, holidaySet, slot) === 'R1') {
+        if (requiredClassFor(date, holidaySet, slot, excludeR4Mode, widx) === 'R1') {
           r1SlotsPerWeek.set(wk, (r1SlotsPerWeek.get(wk) || 0) + 1);
         }
       }
@@ -218,6 +227,7 @@ function prepareContext(params) {
     weeklyHourCapMode,
     unavoidableWeekKeys,
     dayoffCountingMode,
+    excludeR4Mode,
   };
 }
 
@@ -260,7 +270,7 @@ function buildDayoffWishes({ days, employees, holidaySet, dayKeys }) {
   return wishes;
 }
 
-function computeRoleCaps({ days, holidaySet, employees, roleHardcapMode, weekdaySlots, weekendSlots }) {
+function computeRoleCaps({ days, holidaySet, employees, roleHardcapMode, weekdaySlots, weekendSlots, excludeR4Mode = false, weekKeys = [], start = null, weekMode = 'calendar' }) {
   const klassKey = (klass) => (klass && klass.trim()) ? klass : '__none__';
   const roleDeviationLimit = (klass) => {
     if (!klass || klass === '__none__') return Number.POSITIVE_INFINITY;
@@ -274,9 +284,25 @@ function computeRoleCaps({ days, holidaySet, employees, roleHardcapMode, weekday
     return classSlots.get(k);
   };
 
+  const weekKeyToIndex = new Map();
+  weekKeys.forEach((wk, idx) => weekKeyToIndex.set(wk, idx));
+
   for (const date of days) {
-    ensureClass(requiredClassFor(date, holidaySet, 0)).by += 1;
-    ensureClass(requiredClassFor(date, holidaySet, 1)).eu += 1;
+    const wk = start ? weekKeyByMode(date, start, weekMode) : null;
+    const widx = wk ? (weekKeyToIndex.get(wk) || 0) : 0;
+    const class0 = requiredClassFor(date, holidaySet, 0, excludeR4Mode, widx);
+    const class1 = requiredClassFor(date, holidaySet, 1, excludeR4Mode, widx);
+    // Handle multi-class options (e.g., 'R2|R3')
+    if (class0.includes('|')) {
+      class0.split('|').forEach(k => ensureClass(k).by += 1);
+    } else {
+      ensureClass(class0).by += 1;
+    }
+    if (class1.includes('|')) {
+      class1.split('|').forEach(k => ensureClass(k).eu += 1);
+    } else {
+      ensureClass(class1).eu += 1;
+    }
   }
 
   const eligBy = new Map();
@@ -288,13 +314,18 @@ function computeRoleCaps({ days, holidaySet, employees, roleHardcapMode, weekday
 
   for (const date of days) {
     const key = fmtDate(date);
+    const wk = start ? weekKeyByMode(date, start, weekMode) : null;
+    const widx = wk ? (weekKeyToIndex.get(wk) || 0) : 0;
+    const class0 = requiredClassFor(date, holidaySet, 0, excludeR4Mode, widx);
+    const class1 = requiredClassFor(date, holidaySet, 1, excludeR4Mode, widx);
     for (const p of employees) {
       if (p.vacationDays.has(key)) continue;
       const disallow = p.dutyUnavailable.has(key) || p.dayoffWish.has(key);
-      if (!disallow && requiredClassFor(date, holidaySet, 0) === p.klass) {
+      // Check if person matches required class (handling multi-class options)
+      if (!disallow && (class0 === p.klass || class0.split('|').includes(p.klass))) {
         eligBy.set(p.id, (eligBy.get(p.id) || 0) + 1);
       }
-      if (!disallow && requiredClassFor(date, holidaySet, 1) === p.klass) {
+      if (!disallow && (class1 === p.klass || class1.split('|').includes(p.klass))) {
         eligEu.set(p.id, (eligEu.get(p.id) || 0) + 1);
       }
     }
@@ -369,6 +400,7 @@ function buildModel(ctx) {
     enforceR3PediatricWedBan,
     enforceVacationExclusion,
     enforceUnavailableExclusion,
+    excludeR4Mode,
   } = ctx;
 
   const model = {
@@ -381,6 +413,10 @@ function buildModel(ctx) {
 
   const assignmentVars = [];
   const underfillVars = [];
+
+  // Create weekKey to weekIndex mapping
+  const weekKeyToIndex = new Map();
+  weekKeys.forEach((wk, idx) => weekKeyToIndex.set(wk, idx));
 
   // Day-off wish constraints (force duty on the day before wished Day-off)
   if (enforceDayoffWish) {
@@ -554,16 +590,17 @@ function buildModel(ctx) {
     const isWeekday = isWorkday(date, holidaySet);
     const dutyHours = isWeekday ? DUTY_HOURS.weekday : DUTY_HOURS.weekend;
     const weekKey = weekKeyByMode(date, start, weekMode);
+    const weekIndex = weekKeyToIndex.get(weekKey) || 0;
 
     const nextDay = addDays(date, 1);
     const nextDayIsWorkday = (dayIdx < days.length - 1) && isWorkday(nextDay, holidaySet);
 
     for (let slot = 0; slot < 2; slot += 1) {
-      const neededClass = requiredClassFor(date, holidaySet, slot);
+      const neededClass = requiredClassFor(date, holidaySet, slot, excludeR4Mode, weekIndex);
       const slotConstraint = slotConstraintName(dayIdx, slot);
 
       for (const person of employees) {
-        if (!isEligibleForSlot({ person, neededClass, date, dayKey, slot, isWeekday, holidaySet, dayIdx, priorCooldownIndex, enforceR3PediatricWedBan })) {
+        if (!isEligibleForSlot({ person, neededClass, date, dayKey, slot, isWeekday, holidaySet, dayIdx, priorCooldownIndex, enforceR3PediatricWedBan, excludeR4Mode })) {
           continue;
         }
         const varName = `x_${dayIdx}_${slot}_${person.id}`;
@@ -688,8 +725,17 @@ function buildModel(ctx) {
 
 
 
-function isEligibleForSlot({ person, neededClass, date, dayKey, slot, isWeekday, holidaySet, dayIdx, priorCooldownIndex, enforceR3PediatricWedBan }) {
-  if ((person.klass || '') !== neededClass) return false;
+function isEligibleForSlot({ person, neededClass, date, dayKey, slot, isWeekday, holidaySet, dayIdx, priorCooldownIndex, enforceR3PediatricWedBan, excludeR4Mode }) {
+  // Check if person's class matches needed class (handling multi-class options like 'R2|R3')
+  const personKlass = person.klass || '';
+  const classMatches = neededClass.includes('|')
+    ? neededClass.split('|').includes(personKlass)
+    : personKlass === neededClass;
+  if (!classMatches) return false;
+
+  // In excludeR4Mode, exclude pediatric residents from Tuesday slot 1 (응당)
+  if (excludeR4Mode && date.getDay() === 2 && slot === 1 && person.pediatric) return false;
+
   if (person.vacationDays.has(dayKey)) return false;
   if (person.dutyUnavailable.has(dayKey)) return false;
   if (person.dayoffWish.has(dayKey)) return false;
@@ -962,7 +1008,7 @@ function collectTotalWarning(person, warnings, limit) {
   }
 }
 
-function requiredClassFor(date, holidaySet, slotIndex) {
+function requiredClassFor(date, holidaySet, slotIndex, excludeR4Mode = false, weekIndex = 0) {
   const isWk = isWorkday(date, holidaySet);
   const dow = date.getDay();
   if (!isWk) {
@@ -970,7 +1016,14 @@ function requiredClassFor(date, holidaySet, slotIndex) {
   }
   switch (dow) {
     case 1: return slotIndex === 0 ? 'R1' : 'R3';
-    case 2: return slotIndex === 0 ? 'R1' : 'R4';
+    case 2:
+      if (slotIndex === 0) return 'R1';
+      // Tuesday slot 1: R4 in normal mode, alternating R2/R3 in exclude mode
+      if (excludeR4Mode) {
+        // Week 0,2,4,... → R2, Week 1,3,5,... → R3
+        return (weekIndex % 2 === 0) ? 'R2' : 'R3';
+      }
+      return 'R4';
     case 3: return slotIndex === 0 ? 'R3' : 'R2';
     case 4: return slotIndex === 0 ? 'R1' : 'R2';
     case 5: return slotIndex === 0 ? 'R1' : 'R3';

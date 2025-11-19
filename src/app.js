@@ -37,6 +37,7 @@ const toggleDayoffCounting = document.querySelector('#toggle-dayoff-trailing');
 const toggleR3PediatricWed = document.querySelector('#toggle-r3-ped-wed');
 const toggleVacationBan = document.querySelector('#toggle-vacation-ban');
 const toggleUnavailableBan = document.querySelector('#toggle-unavailable-ban');
+const excludeR4Toggle = document.querySelector('#exclude-r4-mode');
 const scoreOvertimeSoft = document.querySelector('#score-overtime-soft');
 const scoreOvertimeHard = document.querySelector('#score-overtime-hard');
 const scoreUnder40Penalty = document.querySelector('#score-under-40');
@@ -386,6 +387,7 @@ async function onGenerate() {
           enforceDayoffBalance,
           weeklyHourCapMode: hourCap,
           dayoffCountingMode,
+          excludeR4Mode: excludeR4Toggle?.checked ?? false,
         };
         return generateSchedule(args);
       };

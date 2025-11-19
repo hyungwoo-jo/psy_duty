@@ -104,7 +104,7 @@ R4 이동인"></textarea>
                 <small>휴가자가 없으면 평일 2회까지만 배치하며, 공휴일이나 비상 상황에서는 자동으로 추가 배정될 수 있습니다.</small>
               </div>
               <div>
-                <input type="checkbox" id="toggle-r3-cap" checked />
+                <input type="checkbox" id="toggle-r3-cap" />
                 <label for="toggle-r3-cap">R3 주당 당직 한도 (평시 1회)</label>
                 <small>R3는 한 주에 최소 1회 배치되며, 휴가자가 있는 주에는 최대 2회까지 허용합니다.</small>
               </div>
@@ -124,7 +124,7 @@ R4 이동인"></textarea>
                 <small>희망한 날짜를 Day-off로 확보할 수 있도록 전날에 당직을 배정합니다.</small>
               </div>
               <div>
-                <input type="checkbox" id="toggle-dayoff-trailing" />
+                <input type="checkbox" id="toggle-dayoff-trailing" checked />
                 <label for="toggle-dayoff-trailing">Day-off 집계: 종료 다음날 반영</label>
                 <small>체크 시 시작 전날 보정은 제외하고, 달 마지막 당직 다음 평일을 Day-off로 계산합니다.</small>
               </div>
@@ -147,6 +147,11 @@ R4 이동인"></textarea>
                 <input type="checkbox" id="role-hardcap-toggle" />
                 <label for="role-hardcap-toggle">역할 편차 완화 모드</label>
                 <small id="role-hardcap-mode-label">체크하면 역할 편차를 ±2까지 허용합니다. (미체크 시 ±1입니다.)</small>
+              </div>
+              <div>
+                <input type="checkbox" id="exclude-r4-mode" checked />
+                <label for="exclude-r4-mode">R4 제외 모드</label>
+                <small>화요일 응당을 소아 제외 2,3년차로 격주 교대 배정합니다 (1주차: R2, 2주차: R3, ...).</small>
               </div>
             </div>
           </fieldset>
