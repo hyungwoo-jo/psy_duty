@@ -524,17 +524,32 @@ async function onGenerate() {
             const peopleInClass = result.stats.filter(s => (empById.get(s.id)?.klass || '기타') === klass);
             if (!peopleInClass.length) continue;
 
-            const roles = [
-              { key: 'off', countMap: dayOff },
-              { key: 'byung', countMap: byungCount },
-              { key: 'eung', countMap: eungCount },
-            ];
+            const isR3 = klass === 'R3';
+            const roles = isR3
+              ? [
+                  { key: 'off', countMap: dayOff },
+                  { key: 'duty', countMap: new Map([...peopleInClass.map(p => [p.id, (byungCount.get(p.id) || 0) + (eungCount.get(p.id) || 0)])]) },
+                ]
+              : [
+                  { key: 'off', countMap: dayOff },
+                  { key: 'byung', countMap: byungCount },
+                  { key: 'eung', countMap: eungCount },
+                ];
 
             for (const role of roles) {
-              if (klass === 'R3' && (role.key === 'byung' || role.key === 'eung')) {
-                continue;
+              // For R3 'duty', combine byung and eung from previous stats
+              let prevList = [];
+              if (isR3 && role.key === 'duty') {
+                const byungList = (prev.entriesByClassRole.get(klass)?.['byung']) || [];
+                const eungList = (prev.entriesByClassRole.get(klass)?.['eung']) || [];
+                const combined = new Map();
+                for (const e of [...byungList, ...eungList]) {
+                  combined.set(e.name, (combined.get(e.name) || 0) + (Number(e.delta) || 0));
+                }
+                prevList = [...combined.entries()].map(([name, delta]) => ({ name, delta }));
+              } else {
+                prevList = (prev.entriesByClassRole.get(klass)?.[role.key]) || [];
               }
-              const prevList = (prev.entriesByClassRole.get(klass)?.[role.key]) || [];
               const prevByName = new Map(prevList.map((e) => [e.name, Number(e.delta) || 0]));
               const finalCounts = peopleInClass.map((p) => ({
                 id: p.id,
@@ -1534,14 +1549,32 @@ function buildCarryoverRows(result, prev) {
     const peopleInClass = result.stats.filter(s => (empById.get(s.id)?.klass || '기타') === klass);
     if (!peopleInClass.length) continue;
 
-    const roles = [
-      { key: 'byung', name: '병당', countMap: byungCount },
-      { key: 'eung', name: '응당', countMap: eungCount },
-      { key: 'off', name: 'Day-off', countMap: dayOff },
-    ];
+    const isR3 = klass === 'R3';
+    const roles = isR3
+      ? [
+          { key: 'duty', name: '당직', countMap: new Map([...peopleInClass.map(p => [p.id, (byungCount.get(p.id) || 0) + (eungCount.get(p.id) || 0)])]) },
+          { key: 'off', name: 'Day-off', countMap: dayOff },
+        ]
+      : [
+          { key: 'byung', name: '병당', countMap: byungCount },
+          { key: 'eung', name: '응당', countMap: eungCount },
+          { key: 'off', name: 'Day-off', countMap: dayOff },
+        ];
 
     for (const role of roles) {
-      const prevList = (prev.entriesByClassRole.get(klass)?.[role.key]) || [];
+      // For R3 'duty', combine byung and eung from previous stats
+      let prevList = [];
+      if (isR3 && role.key === 'duty') {
+        const byungList = (prev.entriesByClassRole.get(klass)?.['byung']) || [];
+        const eungList = (prev.entriesByClassRole.get(klass)?.['eung']) || [];
+        const combined = new Map();
+        for (const e of [...byungList, ...eungList]) {
+          combined.set(e.name, (combined.get(e.name) || 0) + (Number(e.delta) || 0));
+        }
+        prevList = [...combined.entries()].map(([name, delta]) => ({ name, delta }));
+      } else {
+        prevList = (prev.entriesByClassRole.get(klass)?.[role.key]) || [];
+      }
       const prevByName = new Map(prevList.map((e) => [e.name, Number(e.delta) || 0]));
 
       const finalCounts = peopleInClass.map((p) => ({
@@ -1572,7 +1605,10 @@ function buildPreviousAdjustRows(result, prev) {
   for (const klass of order) {
     const rec = entriesBy.get(klass);
     if (!rec) continue;
-    const sections = [ ['byung','병당'], ['eung','응당'], ['off','Day-off'] ];
+    const isR3 = klass === 'R3';
+    const sections = isR3
+      ? [ ['duty','당직'], ['off','Day-off'] ]
+      : [ ['byung','병당'], ['eung','응당'], ['off','Day-off'] ];
     for (const [key, label] of sections) {
       const list = rec[key] || [];
       if (list.length === 0) continue;
@@ -1912,16 +1948,34 @@ function renderCarryoverStats(result, opts = {}) {
     table.appendChild(thead);
     const tbody = document.createElement('tbody');
 
-    const roles = [
-      { key: 'byung', name: '병당', countMap: byungCount },
-      { key: 'eung', name: '응당', countMap: eungCount },
-      { key: 'off', name: 'Day-off', countMap: dayOff },
-    ];
+    const isR3 = klass === 'R3';
+    const roles = isR3
+      ? [
+          { key: 'duty', name: '당직', countMap: new Map([...peopleInClass.map(p => [p.id, (byungCount.get(p.id) || 0) + (eungCount.get(p.id) || 0)])]) },
+          { key: 'off', name: 'Day-off', countMap: dayOff },
+        ]
+      : [
+          { key: 'byung', name: '병당', countMap: byungCount },
+          { key: 'eung', name: '응당', countMap: eungCount },
+          { key: 'off', name: 'Day-off', countMap: dayOff },
+        ];
 
     for (const role of roles) {
-      const prevList = (prev.entriesByClassRole.get(klass)?.[role.key]) || [];
+      // For R3 'duty', combine byung and eung from previous stats
+      let prevList = [];
+      if (isR3 && role.key === 'duty') {
+        const byungList = (prev.entriesByClassRole.get(klass)?.['byung']) || [];
+        const eungList = (prev.entriesByClassRole.get(klass)?.['eung']) || [];
+        const combined = new Map();
+        for (const e of [...byungList, ...eungList]) {
+          combined.set(e.name, (combined.get(e.name) || 0) + (Number(e.delta) || 0));
+        }
+        prevList = [...combined.entries()].map(([name, delta]) => ({ name, delta }));
+      } else {
+        prevList = (prev.entriesByClassRole.get(klass)?.[role.key]) || [];
+      }
       const prevByName = new Map(prevList.map((e) => [e.name, Number(e.delta) || 0]));
-      
+
       // 1. Create "Final Count" by adding previous delta to current raw count
       const finalCounts = peopleInClass.map((p) => ({
         id: p.id,
@@ -2029,11 +2083,29 @@ function getPreviousStatsFromUI() {
     const name = tr.getAttribute('data-name');
     const emp = byName.get(name);
     if (!emp) return;
-    const by = Number(tr.querySelector('input[data-role="byung"]').value);
-    const eu = Number(tr.querySelector('input[data-role="eung"]').value);
-    const off = Number(tr.querySelector('input[data-role="off"]').value);
-    if (by) entries.push({ id: emp.id, name, klass: emp.klass || '', role: 'byung', delta: by });
-    if (eu) entries.push({ id: emp.id, name, klass: emp.klass || '', role: 'eung', delta: eu });
+    const isR3 = emp.klass === 'R3';
+    if (isR3) {
+      // R3: Read combined duty value
+      const dutyInput = tr.querySelector('input[data-role="duty"]');
+      const duty = dutyInput ? Number(dutyInput.value) : 0;
+      // Store as both byung and eung with split value
+      if (duty) {
+        const half = duty / 2;
+        entries.push({ id: emp.id, name, klass: emp.klass || '', role: 'byung', delta: half });
+        entries.push({ id: emp.id, name, klass: emp.klass || '', role: 'eung', delta: half });
+      }
+    } else {
+      // Non-R3: Read separate byung/eung
+      const byungInput = tr.querySelector('input[data-role="byung"]');
+      const eungInput = tr.querySelector('input[data-role="eung"]');
+      const by = byungInput ? Number(byungInput.value) : 0;
+      const eu = eungInput ? Number(eungInput.value) : 0;
+      if (by) entries.push({ id: emp.id, name, klass: emp.klass || '', role: 'byung', delta: by });
+      if (eu) entries.push({ id: emp.id, name, klass: emp.klass || '', role: 'eung', delta: eu });
+    }
+    // Day-off (all employees)
+    const offInput = tr.querySelector('input[data-role="off"]');
+    const off = offInput ? Number(offInput.value) : 0;
     if (off) entries.push({ id: emp.id, name, klass: emp.klass || '', role: 'off', delta: off });
   });
   const sumByClassRole = new Map();
@@ -2061,13 +2133,30 @@ function renderPreviousStatsUI() {
   for (const e of emps) {
     const tr = document.createElement('tr'); tr.setAttribute('data-name', e.name);
     const nameTd = document.createElement('td'); nameTd.textContent = `${e.name} (${e.klass || '-'})`; tr.appendChild(nameTd);
-    for (const role of ['byung','eung','off']) {
-      const td = document.createElement('td'); td.classList.add('num');
+    const isR3 = e.klass === 'R3';
+    if (isR3) {
+      // R3: Combined duty column
+      const td = document.createElement('td'); td.classList.add('num'); td.colSpan = 2;
       const input = document.createElement('input');
       input.type = 'number'; input.step = '1'; input.value = '0';
-      input.setAttribute('data-role', role);
+      input.setAttribute('data-role', 'duty');
       td.appendChild(input); tr.appendChild(td);
+    } else {
+      // Non-R3: Separate byung/eung columns
+      for (const role of ['byung','eung']) {
+        const td = document.createElement('td'); td.classList.add('num');
+        const input = document.createElement('input');
+        input.type = 'number'; input.step = '1'; input.value = '0';
+        input.setAttribute('data-role', role);
+        td.appendChild(input); tr.appendChild(td);
+      }
     }
+    // Day-off column (all employees)
+    const tdOff = document.createElement('td'); tdOff.classList.add('num');
+    const inputOff = document.createElement('input');
+    inputOff.type = 'number'; inputOff.step = '1'; inputOff.value = '0';
+    inputOff.setAttribute('data-role', 'off');
+    tdOff.appendChild(inputOff); tr.appendChild(tdOff);
     tbody.appendChild(tr);
   }
   table.appendChild(tbody);
@@ -2195,7 +2284,10 @@ function renderPersonalStats(result) {
     table.className = 'report-table';
     const thead = document.createElement('thead');
     const thr = document.createElement('tr');
-    const hdrs = ['이름', '병당(회)', '응당(회)', '총 당직(회)', 'Day-off'];
+    const isR3 = klass === 'R3';
+    const hdrs = isR3
+      ? ['이름', '당직(회)', 'Day-off']
+      : ['이름', '병당(회)', '응당(회)', '총 당직(회)', 'Day-off'];
     for (const h of hdrs) { const th = document.createElement('th'); th.textContent = h; thr.appendChild(th); }
     thead.appendChild(thr); table.appendChild(thead);
     const tbody = document.createElement('tbody');
@@ -2203,13 +2295,12 @@ function renderPersonalStats(result) {
       const emp = empById.get(s.id) || {};
       const offW = dayOff.get(s.id) || 0;
       const tr = document.createElement('tr');
-      const cells = [
-        s.name,
-        String(byungCount.get(s.id) || 0),
-        String(eungCount.get(s.id) || 0),
-        String((byungCount.get(s.id) || 0) + (eungCount.get(s.id) || 0)),
-        String(offW),
-      ];
+      const byung = byungCount.get(s.id) || 0;
+      const eung = eungCount.get(s.id) || 0;
+      const total = byung + eung;
+      const cells = isR3
+        ? [s.name, String(total), String(offW)]
+        : [s.name, String(byung), String(eung), String(total), String(offW)];
       cells.forEach((val, idx) => {
         const td = document.createElement('td');
         td.textContent = String(val);
