@@ -32,6 +32,26 @@
       
       <!-- 당직 인원 고정: 병당 1, 응당 1 (UI 옵션 제거) -->
       <div class="field field--full">
+        <label for="holidays">공휴일 지정</label>
+        <div style="display:flex; gap:8px; align-items:flex-start; flex-wrap: wrap;">
+          <textarea id="holidays" rows="4" placeholder="예시:&#10;2025-01-01&#10;-2025-02-28 (빼기)"></textarea>
+          <div style="display:flex; flex-direction: column; gap:6px;">
+            <button type="button" id="load-kr-holidays">공휴일 불러오기</button>
+            <button type="button" id="clear-holidays">공휴일 비우기</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="field field--full">
+        <label>달력 편집</label>
+        <div style="display:flex; gap:8px; align-items:center; flex-wrap: wrap;">
+          <button type="button" id="show-calendar">달력 불러오기</button>
+          <span class="legend">공휴일 불러오기 후 달력을 열어 슬롯/강제배정을 설정하세요</span>
+        </div>
+        <div id="calendar-container" style="display:none; margin-top:12px;"></div>
+      </div>
+
+      <div class="field field--full">
         <label for="employees">근무자 목록</label>
         <textarea id="employees" rows="12" placeholder="형식 예시:
 R1 장주만
@@ -66,31 +86,29 @@ R4 이동인"></textarea>
           ].join('\n');
         });
       </script>
+
       <div class="field field--full">
-        <label for="holidays">공휴일 지정</label>
-        <div style="display:flex; gap:8px; align-items:flex-start; flex-wrap: wrap;">
-          <textarea id="holidays" rows="4" placeholder="예시:&#10;2025-01-01&#10;-2025-02-28 (빼기)"></textarea>
-          <div style="display:flex; flex-direction: column; gap:6px;">
-            <button type="button" id="load-kr-holidays">공휴일 불러오기</button>
-            <button type="button" id="clear-holidays">공휴일 비우기</button>
-          </div>
-        </div>
-      </div>
-      <div class="field field--full">
-        <label for="unavailable">당직 불가일</label>
-        <textarea id="unavailable" rows="5" placeholder="예시:
+        <details>
+          <summary>부가 입력 (불가일/희망일/휴가)</summary>
+          <div style="margin-top:12px;">
+            <div class="field field--full">
+              <label for="unavailable">당직 불가일</label>
+              <textarea id="unavailable" rows="5" placeholder="예시:
 장주만: 2025-01-07, 2025-01-15
 조형우: 2025-01-10 | 2025-01-11
 윤성민: 2025-01-04
 "></textarea>
-      </div>
-      <div class="field field--full">
-        <label for="dayoff-wish">Day-off 희망일(평일)</label>
-        <textarea id="dayoff-wish" rows="4" placeholder="예시:&#10;장주만: 2025-01-09, 2025-01-23&#10;조형우: 2025-01-16"></textarea>
-      </div>
-      <div class="field field--full">
-        <label for="vacations">휴가</label>
-        <textarea id="vacations" rows="4" placeholder="예시:&#10;장주만: 2025-01-06~2025-01-12&#10;조형우: 2025-01-20~2025-01-22, 2025-02-03~2025-02-04"></textarea>
+            </div>
+            <div class="field field--full">
+              <label for="dayoff-wish">Day-off 희망일(평일)</label>
+              <textarea id="dayoff-wish" rows="4" placeholder="예시:&#10;장주만: 2025-01-09, 2025-01-23&#10;조형우: 2025-01-16"></textarea>
+            </div>
+            <div class="field field--full">
+              <label for="vacations">휴가</label>
+              <textarea id="vacations" rows="4" placeholder="예시:&#10;장주만: 2025-01-06~2025-01-12&#10;조형우: 2025-01-20~2025-01-22, 2025-02-03~2025-02-04"></textarea>
+            </div>
+          </div>
+        </details>
       </div>
 
       <div class="field field--full">
@@ -98,21 +116,7 @@ R4 이동인"></textarea>
           <summary>Ruleset</summary>
           <fieldset>
             <div class="checkbox-group">
-              <div>
-                <input type="checkbox" id="toggle-r1-cap" checked />
-                <label for="toggle-r1-cap">R1 주당 당직 상한 (2회)</label>
-                <small>휴가자가 없으면 평일 2회까지만 배치하며, 공휴일이나 비상 상황에서는 자동으로 추가 배정될 수 있습니다.</small>
-              </div>
-              <div>
-                <input type="checkbox" id="toggle-r3-cap" />
-                <label for="toggle-r3-cap">R3 주당 당직 한도 (평시 1회)</label>
-                <small>R3는 한 주에 최소 1회 배치되며, 휴가자가 있는 주에는 최대 2회까지 허용합니다.</small>
-              </div>
-              <div>
-                <input type="checkbox" id="toggle-r2-min" checked />
-                <label for="toggle-r2-min">R2 주당 최소 1회 당직</label>
-                <small>각 R2에게 주별로 최소 1회 이상의 당직을 배정합니다.</small>
-              </div>
+              <div class="legend">※ R1/R2/R3 주간 당직 제약은 Scoring 섹션에서 페널티로 조정할 수 있습니다.</div>
               <div>
                 <input type="checkbox" id="toggle-r3-balance" checked />
                 <label for="toggle-r3-balance">비소아 R3 듀오 균형</label>
@@ -191,6 +195,12 @@ R4 이동인"></textarea>
               <small>전날 한 번 쉬고 다시 당직에 투입되는 패턴을 줄이고 싶을 때 사용합니다.</small>
               <div><label for="score-fri-sun" title="같은 주 금요일과 일요일 당직을 동일 인원이 맡은 경우 부과되는 점수입니다.">금·일 동시 당직 페널티</label><input type="number" id="score-fri-sun" value="1" step="0.5" /></div>
               <small>같은 주 금요일과 일요일을 모두 맡은 인원에게 추가 부담을 줄이고 싶을 때 사용합니다.</small>
+              <div><label for="score-r1-weekly-over" title="R1이 한 주에 3회 이상 당직을 서게 될 때 부과되는 점수입니다.">R1 주당 3회 이상 페널티</label><input type="number" id="score-r1-weekly-over" value="10" step="0.5" /></div>
+              <small>R1 주당 당직 제약이 꺼져있을 때, 한 주에 3회 이상 당직 시 페널티를 부과합니다.</small>
+              <div><label for="score-r3-weekly-over" title="R3이 한 주에 2회 이상 당직을 서게 될 때 부과되는 점수입니다.">R3 주당 2회 이상 페널티</label><input type="number" id="score-r3-weekly-over" value="10" step="0.5" /></div>
+              <small>R3 주당 당직 제약이 꺼져있을 때, 한 주에 2회 이상 당직 시 페널티를 부과합니다.</small>
+              <div><label for="score-r2-weekly-under" title="R2가 한 주에 당직이 없을 때 부과되는 점수입니다.">R2 주당 0회 페널티</label><input type="number" id="score-r2-weekly-under" value="10" step="0.5" /></div>
+              <small>R2 주당 최소 제약이 꺼져있을 때, 한 주에 당직이 없으면 페널티를 부과합니다.</small>
 
             </div>
           </fieldset>

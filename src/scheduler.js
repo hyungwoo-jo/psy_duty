@@ -53,17 +53,15 @@ function prepareContext(params) {
     dayoffCountingMode = 'leading',
     prevStats = null,
     randomSeed = null,
-    enforceR3WeeklyCap = false,
-    enforceR1WeeklyCap = false,
     enforceDayoffBalance = true,
     weeklyHourCapMode = 'strict',
-    enforceR2WeeklyMin = true,
     enforceR3NonPediatricBalance = true,
     enforceDayoffWish = true,
     enforceR3PediatricWedBan = true,
     enforceVacationExclusion = true,
     enforceUnavailableExclusion = true,
     excludeR4Mode = false,
+    customSlotOverrides = {},
   } = params || {};
 
   if (!employees || employees.length < 2) {
@@ -159,6 +157,7 @@ function prepareContext(params) {
     weekKeys,
     start,
     weekMode,
+    customSlotOverrides,
   });
 
   const r1s = employeesWithMeta.filter(p => p.klass === 'R1');
@@ -216,9 +215,6 @@ function prepareContext(params) {
     vacationKlasses,
     weekdaysInWeek,
     vacationWeekdays,
-    enforceR3WeeklyCap,
-    enforceR1WeeklyCap,
-    enforceR2WeeklyMin,
     enforceR3NonPediatricBalance,
     enforceDayoffWish,
     enforceR3PediatricWedBan,
@@ -228,6 +224,7 @@ function prepareContext(params) {
     unavoidableWeekKeys,
     dayoffCountingMode,
     excludeR4Mode,
+    customSlotOverrides,
   };
 }
 
@@ -270,7 +267,7 @@ function buildDayoffWishes({ days, employees, holidaySet, dayKeys }) {
   return wishes;
 }
 
-function computeRoleCaps({ days, holidaySet, employees, roleHardcapMode, weekdaySlots, weekendSlots, excludeR4Mode = false, weekKeys = [], start = null, weekMode = 'calendar' }) {
+function computeRoleCaps({ days, holidaySet, employees, roleHardcapMode, weekdaySlots, weekendSlots, excludeR4Mode = false, weekKeys = [], start = null, weekMode = 'calendar', customSlotOverrides = {} }) {
   const klassKey = (klass) => (klass && klass.trim()) ? klass : '__none__';
   const roleDeviationLimit = (klass) => {
     if (!klass || klass === '__none__') return Number.POSITIVE_INFINITY;
@@ -290,8 +287,12 @@ function computeRoleCaps({ days, holidaySet, employees, roleHardcapMode, weekday
   for (const date of days) {
     const wk = start ? weekKeyByMode(date, start, weekMode) : null;
     const widx = wk ? (weekKeyToIndex.get(wk) || 0) : 0;
-    const class0 = requiredClassFor(date, holidaySet, 0, excludeR4Mode, widx);
-    const class1 = requiredClassFor(date, holidaySet, 1, excludeR4Mode, widx);
+    const dateKey = fmtDate(date);
+    const override = customSlotOverrides[dateKey];
+
+    let class0 = override?.slots?.[0] || requiredClassFor(date, holidaySet, 0, excludeR4Mode, widx);
+    let class1 = override?.slots?.[1] || requiredClassFor(date, holidaySet, 1, excludeR4Mode, widx);
+
     // Handle multi-class options (e.g., 'R2|R3')
     if (class0.includes('|')) {
       class0.split('|').forEach(k => ensureClass(k).by += 1);
@@ -316,8 +317,11 @@ function computeRoleCaps({ days, holidaySet, employees, roleHardcapMode, weekday
     const key = fmtDate(date);
     const wk = start ? weekKeyByMode(date, start, weekMode) : null;
     const widx = wk ? (weekKeyToIndex.get(wk) || 0) : 0;
-    const class0 = requiredClassFor(date, holidaySet, 0, excludeR4Mode, widx);
-    const class1 = requiredClassFor(date, holidaySet, 1, excludeR4Mode, widx);
+    const override = customSlotOverrides[key];
+
+    let class0 = override?.slots?.[0] || requiredClassFor(date, holidaySet, 0, excludeR4Mode, widx);
+    let class1 = override?.slots?.[1] || requiredClassFor(date, holidaySet, 1, excludeR4Mode, widx);
+
     for (const p of employees) {
       if (p.vacationDays.has(key)) continue;
       const disallow = p.dutyUnavailable.has(key) || p.dayoffWish.has(key);
@@ -389,18 +393,16 @@ function buildModel(ctx) {
     vacationKlasses,
     weekdaysInWeek,
     vacationWeekdays,
-    enforceR3WeeklyCap,
-    enforceR1WeeklyCap,
     enforceDayoffBalance,
     weeklyHourCapMode,
     unavoidableWeekKeys,
-    enforceR2WeeklyMin,
     enforceR3NonPediatricBalance,
     enforceDayoffWish,
     enforceR3PediatricWedBan,
     enforceVacationExclusion,
     enforceUnavailableExclusion,
     excludeR4Mode,
+    customSlotOverrides,
   } = ctx;
 
   const model = {
@@ -444,7 +446,6 @@ function buildModel(ctx) {
     }
   }
 
-  /*
   // Total weekly hour constraints (duty + regular)
   // The logic is: Total Hours <= cap
   // Total Hours = Base Regular Hours + Extra Hours
@@ -463,7 +464,7 @@ function buildModel(ctx) {
 
       const numWeekdays = weekdaysInWeek.get(wk) || 0;
       const numVacationDays = vacationWeekdays.get(person.id)?.get(wk) || 0;
-      
+
       const baseRegularHours = (numWeekdays - numVacationDays) * REGULAR_HOURS;
       const rhs = cap - baseRegularHours;
 
@@ -472,7 +473,6 @@ function buildModel(ctx) {
       console.log(`[ILP MODEL] Constraint Added: Person=${person.name}, Week=${wk}, MaxExtraHours=${rhs.toFixed(1)} (Cap=${cap}, BaseRegular=${baseRegularHours.toFixed(1)})`);
     }
   }
-  */
 
   const r3s = employees.filter(p => p.klass === 'R3');
 
@@ -516,38 +516,7 @@ function buildModel(ctx) {
     model.constraints[`r3_balance_dayoff_2`] = { max: 1 };
   }
 
-  // R3 주 1회 당직 제약
-  if (enforceR3WeeklyCap) {
-    for (const person of r3s) {
-      for (const wk of weekKeys) {
-        const constraintName = `r3_weekly_cap_${person.id}_${wk}`;
-        model.constraints[constraintName] = { max: 1 };
-      }
-    }
-  }
-
-  // R1 주 2회 당직 제약
-  if (enforceR1WeeklyCap) {
-    const r1s = employees.filter(p => p.klass === 'R1');
-    for (const person of r1s) {
-      for (const wk of weekKeys) {
-        const constraintName = `r1_weekly_cap_${person.id}_${wk}`;
-                    const cap = unavoidableWeekKeys.has(wk) ? 3 : 2;
-                    model.constraints[constraintName] = { max: cap };
-      }
-    }
-  }
-
-  // R2 주 최소 1회 당직 제약
-  if (enforceR2WeeklyMin) {
-    const r2s = employees.filter(p => p.klass === 'R2');
-    for (const person of r2s) {
-      for (const wk of weekKeys) {
-        const constraintName = `r2_weekly_min_${person.id}_${wk}`;
-        model.constraints[constraintName] = { min: 1 };
-      }
-    }
-  }
+  // R1/R2/R3 weekly constraints moved to scoring
 
   // Role caps
   for (const person of employees) {
@@ -595,11 +564,27 @@ function buildModel(ctx) {
     const nextDay = addDays(date, 1);
     const nextDayIsWorkday = (dayIdx < days.length - 1) && isWorkday(nextDay, holidaySet);
 
+    const override = customSlotOverrides[dayKey];
+
     for (let slot = 0; slot < 2; slot += 1) {
-      const neededClass = requiredClassFor(date, holidaySet, slot, excludeR4Mode, weekIndex);
+      const neededClass = override?.slots?.[slot] || requiredClassFor(date, holidaySet, slot, excludeR4Mode, weekIndex);
       const slotConstraint = slotConstraintName(dayIdx, slot);
 
+      // Check for force assignment
+      const forceName = override?.force?.[slot];
+      const bannedNames = new Set(override?.bans || []);
+
       for (const person of employees) {
+        // Skip if person is in banned list
+        if (bannedNames.has(person.name)) {
+          continue;
+        }
+
+        // If there's a force assignment, only allow that person
+        if (forceName && person.name !== forceName) {
+          continue;
+        }
+
         if (!isEligibleForSlot({ person, neededClass, date, dayKey, slot, isWeekday, holidaySet, dayIdx, priorCooldownIndex, enforceR3PediatricWedBan, excludeR4Mode })) {
           continue;
         }
@@ -636,29 +621,7 @@ function buildModel(ctx) {
         }
         */
 
-        // R3 주 1회 당직 제약 변수 추가
-        if (enforceR3WeeklyCap && person.klass === 'R3') {
-          const constraintName = `r3_weekly_cap_${person.id}_${weekKey}`;
-          if (model.constraints[constraintName]) {
-            model.variables[varName][constraintName] = 1;
-          }
-        }
-
-        // R1 주 2회 당직 제약 변수 추가
-        if (enforceR1WeeklyCap && person.klass === 'R1') {
-          const constraintName = `r1_weekly_cap_${person.id}_${weekKey}`;
-          if (model.constraints[constraintName]) {
-            model.variables[varName][constraintName] = 1;
-          }
-        }
-
-        // R2 주 최소 1회 당직 제약 변수 추가
-        if (enforceR2WeeklyMin && person.klass === 'R2') {
-          const constraintName = `r2_weekly_min_${person.id}_${weekKey}`;
-          if (model.constraints[constraintName]) {
-            model.variables[varName][constraintName] = 1;
-          }
-        }
+        // R1/R2/R3 weekly constraints moved to scoring
 
         // Add to day-off cap constraint if applicable
         if (nextDayIsWorkday) {

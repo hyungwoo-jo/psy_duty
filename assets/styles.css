@@ -309,3 +309,127 @@ footer {
   margin-top: 3rem;
   color: var(--secondary-text-color);
 }
+
+/* Calendar UI */
+.calendar-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background-color: var(--border-color);
+  border: 1px solid var(--border-color);
+  padding: 2px;
+}
+
+.calendar-info {
+  background-color: #f0f8ff;
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--secondary-text-color);
+  border-bottom: 2px solid var(--border-color);
+}
+
+.calendar-header-row {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+
+.calendar-header-cell {
+  background-color: var(--panel-bg-color);
+  padding: 8px;
+  text-align: center;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.calendar-week-row {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+
+.calendar-cell {
+  background-color: #fff;
+  padding: 8px;
+  min-height: 120px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.calendar-cell.out-of-range {
+  background-color: #fafafa;
+  opacity: 0.5;
+}
+
+.calendar-cell.holiday {
+  background-color: #fff3e0;
+}
+
+.calendar-date {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text-color);
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: 4px;
+  margin-bottom: 4px;
+}
+
+.calendar-slots {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.slot-select-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.slot-select-wrapper label {
+  font-size: 11px;
+  color: var(--secondary-text-color);
+  white-space: nowrap;
+  min-width: 36px;
+}
+
+.slot-select-wrapper select {
+  flex: 1;
+  font-size: 11px;
+  padding: 3px 6px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  min-width: 50px;
+}
+
+.calendar-force {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 4px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border-color);
+}
+
+.force-input-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.force-input-wrapper label {
+  font-size: 10px;
+  color: var(--secondary-text-color);
+  white-space: nowrap;
+  min-width: 56px;
+}
+
+.force-input-wrapper input {
+  flex: 1;
+  font-size: 11px;
+  padding: 3px 6px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+}

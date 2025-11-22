@@ -1,5 +1,6 @@
 import { generateSchedule } from './scheduler.js';
 import { fmtDate, addDays, isWeekday, rangeDays, weekKey } from './time.js';
+import { renderCalendar, customSlotOverrides } from './calendar-ui.js';
 
 const startInput = document.querySelector('#start-date');
 const weeksInput = document.querySelector('#weeks');
@@ -28,9 +29,6 @@ const icsVersionInput = document.querySelector('#ics-version');
 const icsPreview = document.querySelector('#ics-preview');
 const hardcapToggle = document.querySelector('#role-hardcap-toggle');
 const hardcapModeLabel = document.querySelector('#role-hardcap-mode-label');
-const toggleR1Cap = document.querySelector('#toggle-r1-cap');
-const toggleR3Cap = document.querySelector('#toggle-r3-cap');
-const toggleR2Min = document.querySelector('#toggle-r2-min');
 const toggleR3Balance = document.querySelector('#toggle-r3-balance');
 const toggleDayoffWish = document.querySelector('#toggle-dayoff-wish');
 const toggleDayoffCounting = document.querySelector('#toggle-dayoff-trailing');
@@ -48,6 +46,9 @@ const scoreRoleIncrement = document.querySelector('#score-role-increment');
 const scoreRoleSpread = document.querySelector('#score-role-spread');
 const scoreGapPenalty = document.querySelector('#score-gap2');
 const scoreFriSunPenalty = document.querySelector('#score-fri-sun');
+const scoreR1WeeklyOver = document.querySelector('#score-r1-weekly-over');
+const scoreR3WeeklyOver = document.querySelector('#score-r3-weekly-over');
+const scoreR2WeeklyUnder = document.querySelector('#score-r2-weekly-under');
 let roleHardcapMode = hardcapToggle?.checked ? 'relaxed' : 'strict';
 let dayoffCountingMode = toggleDayoffCounting?.checked ? 'trailing' : 'leading';
 // 최적화 선택 UI 제거: 기본 strong
@@ -87,6 +88,11 @@ toggleDayoffCounting?.addEventListener('change', () => {
 // 공휴일 도우미 버튼
 document.querySelector('#load-kr-holidays')?.addEventListener('click', () => loadKRHolidays({ merge: true }));
 document.querySelector('#clear-holidays')?.addEventListener('click', () => { holidaysInput.value = ''; });
+// 달력 버튼
+document.querySelector('#show-calendar')?.addEventListener('click', () => {
+  const excludeR4 = excludeR4Toggle?.checked || false;
+  renderCalendar(startInput, endInput, weeksInput, holidaysInput, getWeeksCount, parseHolidays, excludeR4);
+});
 
 const SCORE_DEFAULTS = {
   overtimeSoft: 1,
@@ -98,6 +104,9 @@ const SCORE_DEFAULTS = {
   roleIncrement: 1,
   roleSpread: 1,
   gapPenalty: 0.5,
+  r1WeeklyOver: 10,
+  r3WeeklyOver: 10,
+  r2WeeklyUnder: 10,
   friSunPenalty: 1,
 };
 const SCORE_CLASSES = ['R1','R2','R3','R4'];
@@ -125,6 +134,9 @@ function getCurrentScoreInputs() {
     roleSpread: readScoreInput(scoreRoleSpread, SCORE_DEFAULTS.roleSpread),
     gapPenalty: readScoreInput(scoreGapPenalty, SCORE_DEFAULTS.gapPenalty),
     friSunPenalty: readScoreInput(scoreFriSunPenalty, SCORE_DEFAULTS.friSunPenalty),
+    r1WeeklyOver: readScoreInput(scoreR1WeeklyOver, SCORE_DEFAULTS.r1WeeklyOver),
+    r3WeeklyOver: readScoreInput(scoreR3WeeklyOver, SCORE_DEFAULTS.r3WeeklyOver),
+    r2WeeklyUnder: readScoreInput(scoreR2WeeklyUnder, SCORE_DEFAULTS.r2WeeklyUnder),
   };
 }
 
@@ -140,6 +152,9 @@ function setCurrentScoreInputs(cfg) {
   if (scoreRoleSpread) scoreRoleSpread.value = cfg.roleSpread;
   if (scoreGapPenalty) scoreGapPenalty.value = cfg.gapPenalty;
   if (scoreFriSunPenalty) scoreFriSunPenalty.value = cfg.friSunPenalty;
+  if (scoreR1WeeklyOver) scoreR1WeeklyOver.value = cfg.r1WeeklyOver ?? SCORE_DEFAULTS.r1WeeklyOver;
+  if (scoreR3WeeklyOver) scoreR3WeeklyOver.value = cfg.r3WeeklyOver ?? SCORE_DEFAULTS.r3WeeklyOver;
+  if (scoreR2WeeklyUnder) scoreR2WeeklyUnder.value = cfg.r2WeeklyUnder ?? SCORE_DEFAULTS.r2WeeklyUnder;
 }
 
 function ensureScoreConfigs() {
@@ -344,9 +359,6 @@ async function onGenerate() {
       const prior2 = getPrior2DayDutyFromUI();
 
       // --- Read ILP rule toggles from UI ---
-      const enforceR1Cap = readToggle(toggleR1Cap);
-      const enforceR3Cap = readToggle(toggleR3Cap);
-      const enforceR2Min = readToggle(toggleR2Min);
       const enforceR3Balance = readToggle(toggleR3Balance);
       const enforceDayoffWishRule = readToggle(toggleDayoffWish);
       const enforceR3PediatricWedBan = readToggle(toggleR3PediatricWed);
@@ -376,9 +388,6 @@ async function onGenerate() {
           roleHardcapMode: mode,
           prevStats: prev,
           randomSeed,
-          enforceR3WeeklyCap: r3Cap,
-          enforceR1WeeklyCap: r1Cap,
-          enforceR2WeeklyMin: enforceR2Min,
           enforceR3NonPediatricBalance: enforceR3Balance,
           enforceDayoffWish: enforceDayoffWishRule,
           enforceR3PediatricWedBan,
@@ -388,6 +397,7 @@ async function onGenerate() {
           weeklyHourCapMode: hourCap,
           dayoffCountingMode,
           excludeR4Mode: excludeR4Toggle?.checked ?? false,
+          customSlotOverrides,
         };
         return generateSchedule(args);
       };
@@ -405,12 +415,12 @@ async function onGenerate() {
 
       const attemptWithConstraints = async (mode) => {
         try {
-          return await runSchedule(mode, undefined, enforceR3Cap, enforceR1Cap, 'strict');
+          return await runSchedule(mode, undefined, false, false, 'strict');
         } catch (err) {
           try {
-            return await runSchedule(mode, undefined, enforceR3Cap, false, 'strict');
+            return await runSchedule(mode, undefined, false, false, 'strict');
           } catch {
-            return await runSchedule(mode, undefined, enforceR3Cap, false, 'none');
+            return await runSchedule(mode, undefined, false, false, 'none');
           }
         }
       };
@@ -710,6 +720,47 @@ async function onGenerate() {
           return score;
         }
 
+        function calculateWeeklyDutyPenalty(result, perClassScore) {
+          if (!result || !result.stats) return 0;
+          const empById = new Map(result.employees.map((e) => [e.id, e]));
+          let score = 0;
+
+          for (const person of result.stats) {
+            const klass = empById.get(person.id)?.klass || '';
+            const weeklyDuties = person.weeklyDuties || {};
+            const conf = (weights.perClass?.[klass]) || {};
+
+            for (const week of Object.keys(weeklyDuties)) {
+              const count = Number(weeklyDuties[week]) || 0;
+
+              // R1: 3회 이상 페널티
+              if (klass === 'R1' && count >= 3) {
+                const penalty = conf.r1WeeklyOver ?? weights.global.r1WeeklyOver ?? 0;
+                const add = penalty * (count - 2); // 3회부터 페널티
+                score += add;
+                if (perClassScore) perClassScore.set(klass, (perClassScore.get(klass) || 0) + add);
+              }
+
+              // R3: 2회 이상 페널티
+              if (klass === 'R3' && count >= 2) {
+                const penalty = conf.r3WeeklyOver ?? weights.global.r3WeeklyOver ?? 0;
+                const add = penalty * (count - 1); // 2회부터 페널티
+                score += add;
+                if (perClassScore) perClassScore.set(klass, (perClassScore.get(klass) || 0) + add);
+              }
+
+              // R2: 0회 페널티
+              if (klass === 'R2' && count === 0) {
+                const penalty = conf.r2WeeklyUnder ?? weights.global.r2WeeklyUnder ?? 0;
+                score += penalty;
+                if (perClassScore) perClassScore.set(klass, (perClassScore.get(klass) || 0) + penalty);
+              }
+            }
+          }
+
+          return score;
+        }
+
         function stitchSchedulesByClass({ classes, bestByClass, base }) {
           try {
             const baseRes = base?.result || base;
@@ -760,7 +811,8 @@ async function onGenerate() {
             const totalScore = calculateHourScore(result, perClassScore)
               + calculateCarryoverScore(result, perClassScore)
               + calculateGapPenalty(result, perClassScore)
-              + calculateFriSunPenalty(result, perClassScore);
+              + calculateFriSunPenalty(result, perClassScore)
+              + calculateWeeklyDutyPenalty(result, perClassScore);
             return {
               passed: true,
               candidate: { result, totalScore, perClassScore },
@@ -786,7 +838,7 @@ function recomputeStatsInPlace(result) {
   const holidays = new Set(result.holidays || []);
   const employees = result.employees || [];
   const schedule = result.schedule || [];
-  const people = employees.map((e) => ({ id: e.id, name: e.name, weeklyHours: {}, totalHours: 0, gapA2: 0 }));
+  const people = employees.map((e) => ({ id: e.id, name: e.name, weeklyHours: {}, weeklyDuties: {}, totalHours: 0, gapA2: 0 }));
 
   const dayOffKeysById = new Map(people.map((p) => [p.id, new Set()]));
   const prior = result.config?.priorDayDuty || {};
@@ -858,6 +910,10 @@ function recomputeStatsInPlace(result) {
         person.weeklyHours[wkKey] = (person.weeklyHours[wkKey] || 0) + h;
         person.totalHours += h;
       }
+      // Count weekly duties
+      if (isOnDuty) {
+        person.weeklyDuties[wkKey] = (person.weeklyDuties[wkKey] || 0) + 1;
+      }
     }
   }
 
@@ -874,7 +930,8 @@ function recomputeStatsInPlace(result) {
           const carryoverScore = calculateCarryoverScore(res, perClassScore);
           const gapScore = calculateGapPenalty(res, perClassScore);
           const friSunScore = calculateFriSunPenalty(res, perClassScore);
-          const totalScore = hourScore + carryoverScore + gapScore + friSunScore;
+          const weeklyDutyScore = calculateWeeklyDutyPenalty(res, perClassScore);
+          const totalScore = hourScore + carryoverScore + gapScore + friSunScore + weeklyDutyScore;
           return { result: res, totalScore, perClassScore };
         });
 
