@@ -1,4 +1,3 @@
-import { generateSchedule } from './scheduler.js';
 import { fmtDate, addDays, isWeekday, rangeDays, weekKey } from './time.js';
 import { renderCalendar, customSlotOverrides } from './calendar-ui.js';
 
@@ -70,10 +69,10 @@ runOnReady(() => {
   try {
     if (icsVersionInput && !icsVersionInput.value) icsVersionInput.value = 'v1';
     updateIcsPreview();
-  } catch {}
+  } catch { }
 });
 runOnReady(bindScoreClassTabs);
-['change','input'].forEach((ev) => {
+['change', 'input'].forEach((ev) => {
   startInput?.addEventListener(ev, updateIcsPreview);
   endInput?.addEventListener(ev, updateIcsPreview);
   weeksInput?.addEventListener(ev, updateIcsPreview);
@@ -109,11 +108,35 @@ const SCORE_DEFAULTS = {
   r2WeeklyUnder: 10,
   friSunPenalty: 1,
 };
-const SCORE_CLASSES = ['R1','R2','R3','R4'];
+const SCORE_CLASSES = ['R1', 'R2', 'R3', 'R4'];
 let _scoreClass = 'R1';
 let _scoreConfigs = null;
 let lastResult = null;
 let scheduleSeedCounter = 0;
+
+// Web Worker Initialization
+const worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
+
+function runScheduleInWorker(args) {
+  return new Promise((resolve, reject) => {
+    const id = Date.now() + Math.random();
+    const handler = (e) => {
+      if (e.data.id === id) {
+        worker.removeEventListener('message', handler);
+        if (e.data.type === 'SUCCESS') {
+          resolve(e.data.payload);
+        } else {
+          // Reconstruct Error object from payload
+          const err = new Error(e.data.payload.message);
+          if (e.data.payload.stack) err.stack = e.data.payload.stack;
+          reject(err);
+        }
+      }
+    };
+    worker.addEventListener('message', handler);
+    worker.postMessage({ type: 'GENERATE_SCHEDULE', payload: args, id });
+  });
+}
 
 function readScoreInput(el, fallback) {
   if (!el) return fallback;
@@ -209,7 +232,7 @@ function nextRandomSeed() {
       window.crypto.getRandomValues(arr);
       return arr[0] >>> 0;
     }
-  } catch {}
+  } catch { }
   scheduleSeedCounter += 1;
   const base = Date.now() & 0xffffffff;
   const extra = Math.floor(Math.random() * 0xffffffff);
@@ -269,7 +292,7 @@ function setDefaultStartMonday() {
   const d = String(firstMonday.getDate()).padStart(2, '0');
   try {
     startInput.valueAsDate = firstMonday;
-  } catch {}
+  } catch { }
   startInput.value = `${y}-${m}-${d}`;
 }
 
@@ -335,13 +358,13 @@ async function onGenerate() {
     setLoading(true, '당직표 생성 중… 잠시만 기다려주세요');
     disableActions(true);
     messages.innerHTML = '';
-    
+
     await new Promise(resolve => setTimeout(resolve, 30));
 
     try {
       const startDate = startInput.value;
       // persist current class edits before generating
-      try { ensureScoreConfigs(); _scoreConfigs[_scoreClass] = getCurrentScoreInputs(); } catch {}
+      try { ensureScoreConfigs(); _scoreConfigs[_scoreClass] = getCurrentScoreInputs(); } catch { }
       const weeks = getWeeksCount();
       const endDate = endInput.value || null;
       const employees = parseEmployees(employeesInput.value);
@@ -399,7 +422,7 @@ async function onGenerate() {
           excludeR4Mode: excludeR4Toggle?.checked ?? false,
           customSlotOverrides,
         };
-        return generateSchedule(args);
+        return runScheduleInWorker(args);
       };
 
       // --- Multi-run and evaluation logic ---
@@ -537,14 +560,14 @@ async function onGenerate() {
             const isR3 = klass === 'R3';
             const roles = isR3
               ? [
-                  { key: 'off', countMap: dayOff },
-                  { key: 'duty', countMap: new Map([...peopleInClass.map(p => [p.id, (byungCount.get(p.id) || 0) + (eungCount.get(p.id) || 0)])]) },
-                ]
+                { key: 'off', countMap: dayOff },
+                { key: 'duty', countMap: new Map([...peopleInClass.map(p => [p.id, (byungCount.get(p.id) || 0) + (eungCount.get(p.id) || 0)])]) },
+              ]
               : [
-                  { key: 'off', countMap: dayOff },
-                  { key: 'byung', countMap: byungCount },
-                  { key: 'eung', countMap: eungCount },
-                ];
+                { key: 'off', countMap: dayOff },
+                { key: 'byung', countMap: byungCount },
+                { key: 'eung', countMap: eungCount },
+              ];
 
             for (const role of roles) {
               // For R3 'duty', combine byung and eung from previous stats
@@ -834,95 +857,95 @@ async function onGenerate() {
           result.warnings = warns;
         }
 
-function recomputeStatsInPlace(result) {
-  const holidays = new Set(result.holidays || []);
-  const employees = result.employees || [];
-  const schedule = result.schedule || [];
-  const people = employees.map((e) => ({ id: e.id, name: e.name, weeklyHours: {}, weeklyDuties: {}, totalHours: 0, gapA2: 0 }));
+        function recomputeStatsInPlace(result) {
+          const holidays = new Set(result.holidays || []);
+          const employees = result.employees || [];
+          const schedule = result.schedule || [];
+          const people = employees.map((e) => ({ id: e.id, name: e.name, weeklyHours: {}, weeklyDuties: {}, totalHours: 0, gapA2: 0 }));
 
-  const dayOffKeysById = new Map(people.map((p) => [p.id, new Set()]));
-  const prior = result.config?.priorDayDuty || {};
-  const prior2 = result.config?.prior2DayDuty || {};
-  const priorNames = new Set([prior.byung, prior.eung].filter(Boolean));
-  const prior2Names = new Set([prior2.byung, prior2.eung].filter(Boolean));
-  const dayoffMode = result.config?.dayoffCountingMode || 'leading';
+          const dayOffKeysById = new Map(people.map((p) => [p.id, new Set()]));
+          const prior = result.config?.priorDayDuty || {};
+          const prior2 = result.config?.prior2DayDuty || {};
+          const priorNames = new Set([prior.byung, prior.eung].filter(Boolean));
+          const prior2Names = new Set([prior2.byung, prior2.eung].filter(Boolean));
+          const dayoffMode = result.config?.dayoffCountingMode || 'leading';
 
-  const isWorkday = (date) => {
-    const key = fmtDate(date);
-    const wd = date.getDay();
-    return wd >= 1 && wd <= 5 && !holidays.has(key);
-  };
+          const isWorkday = (date) => {
+            const key = fmtDate(date);
+            const wd = date.getDay();
+            return wd >= 1 && wd <= 5 && !holidays.has(key);
+          };
 
-  if (dayoffMode === 'leading' && schedule.length > 0) {
-    const firstDate = new Date(schedule[0].date);
-    if (isWorkday(firstDate) && priorNames.size) {
-      for (const emp of employees) {
-        if (priorNames.has(emp.name)) {
-          dayOffKeysById.get(emp.id)?.add(fmtDate(firstDate));
+          if (dayoffMode === 'leading' && schedule.length > 0) {
+            const firstDate = new Date(schedule[0].date);
+            if (isWorkday(firstDate) && priorNames.size) {
+              for (const emp of employees) {
+                if (priorNames.has(emp.name)) {
+                  dayOffKeysById.get(emp.id)?.add(fmtDate(firstDate));
+                }
+              }
+            }
+            const prevDate = new Date(firstDate);
+            prevDate.setDate(prevDate.getDate() - 1);
+            if (isWorkday(prevDate) && prior2Names.size) {
+              for (const emp of employees) {
+                if (prior2Names.has(emp.name)) {
+                  dayOffKeysById.get(emp.id)?.add(fmtDate(prevDate));
+                }
+              }
+            }
+          }
+
+          for (let i = 0; i < schedule.length; i += 1) {
+            const cell = schedule[i];
+            let targetDate = null;
+            if (dayoffMode === 'trailing') {
+              targetDate = addDays(new Date(cell.date), 1);
+            } else {
+              const next = schedule[i + 1];
+              if (next) targetDate = new Date(next.date);
+            }
+            if (!targetDate || !isWorkday(targetDate)) continue;
+            const key = fmtDate(targetDate);
+            for (const duty of (cell.duties || [])) {
+              dayOffKeysById.get(duty.id)?.add(key);
+            }
+          }
+
+          for (const cell of schedule) {
+            const date = new Date(cell.date);
+            const key = fmtDate(date);
+            const wkKey = weekKey(date);
+            const workday = isWorkday(date);
+            const dutyIds = new Set((cell.duties || []).map((d) => d.id));
+
+            for (const person of people) {
+              let h = 0;
+              const isOnDuty = dutyIds.has(person.id);
+              const hasDayOff = dayOffKeysById.get(person.id)?.has(key);
+              if (workday) {
+                if (!hasDayOff) h += 8;
+                if (isOnDuty) h += 13.5;
+              } else if (isOnDuty) {
+                h += 21;
+              }
+              if (h > 0) {
+                person.weeklyHours[wkKey] = (person.weeklyHours[wkKey] || 0) + h;
+                person.totalHours += h;
+              }
+              // Count weekly duties
+              if (isOnDuty) {
+                person.weeklyDuties[wkKey] = (person.weeklyDuties[wkKey] || 0) + 1;
+              }
+            }
+          }
+
+          result.stats = people;
+          const gapCounts = getGapCounts(result);
+          for (const person of people) {
+            person.gapA2 = Number(gapCounts.get(person.id) || 0);
+          }
         }
-      }
-    }
-    const prevDate = new Date(firstDate);
-    prevDate.setDate(prevDate.getDate() - 1);
-    if (isWorkday(prevDate) && prior2Names.size) {
-      for (const emp of employees) {
-        if (prior2Names.has(emp.name)) {
-          dayOffKeysById.get(emp.id)?.add(fmtDate(prevDate));
-        }
-      }
-    }
-  }
-
-  for (let i = 0; i < schedule.length; i += 1) {
-    const cell = schedule[i];
-    let targetDate = null;
-    if (dayoffMode === 'trailing') {
-      targetDate = addDays(new Date(cell.date), 1);
-    } else {
-      const next = schedule[i + 1];
-      if (next) targetDate = new Date(next.date);
-    }
-    if (!targetDate || !isWorkday(targetDate)) continue;
-    const key = fmtDate(targetDate);
-    for (const duty of (cell.duties || [])) {
-      dayOffKeysById.get(duty.id)?.add(key);
-    }
-  }
-
-  for (const cell of schedule) {
-    const date = new Date(cell.date);
-    const key = fmtDate(date);
-    const wkKey = weekKey(date);
-    const workday = isWorkday(date);
-    const dutyIds = new Set((cell.duties || []).map((d) => d.id));
-
-    for (const person of people) {
-      let h = 0;
-      const isOnDuty = dutyIds.has(person.id);
-      const hasDayOff = dayOffKeysById.get(person.id)?.has(key);
-      if (workday) {
-        if (!hasDayOff) h += 8;
-        if (isOnDuty) h += 13.5;
-      } else if (isOnDuty) {
-        h += 21;
-      }
-      if (h > 0) {
-        person.weeklyHours[wkKey] = (person.weeklyHours[wkKey] || 0) + h;
-        person.totalHours += h;
-      }
-      // Count weekly duties
-      if (isOnDuty) {
-        person.weeklyDuties[wkKey] = (person.weeklyDuties[wkKey] || 0) + 1;
-      }
-    }
-  }
-
-  result.stats = people;
-  const gapCounts = getGapCounts(result);
-  for (const person of people) {
-    person.gapA2 = Number(gapCounts.get(person.id) || 0);
-  }
-}
 
         const scoredResults = finalResults.map((res) => {
           const perClassScore = new Map();
@@ -942,7 +965,7 @@ function recomputeStatsInPlace(result) {
         }
 
         // Build per-class best map
-        const classes = ['R1','R2','R3','R4'];
+        const classes = ['R1', 'R2', 'R3', 'R4'];
         const bestByClass = new Map();
         for (const k of classes) {
           let best = null;
@@ -964,7 +987,7 @@ function recomputeStatsInPlace(result) {
         renderReport(lastResult, { previous: prev });
         renderRoster(lastResult);
         if (isDiagnosticsEnabled()) {
-          try { renderScoreBreakdown(winner); } catch {}
+          try { renderScoreBreakdown(winner); } catch { }
         }
         if (exportXlsxBtn) exportXlsxBtn.disabled = false;
         if (exportIcsBtn) exportIcsBtn.disabled = false;
@@ -1119,7 +1142,7 @@ function renderGapDetails(result) {
   table.className = 'report-table';
   const thead = document.createElement('thead');
   const thr = document.createElement('tr');
-  ['이름','연차','반복 횟수'].forEach((h) => {
+  ['이름', '연차', '반복 횟수'].forEach((h) => {
     const th = document.createElement('th');
     th.textContent = h;
     thr.appendChild(th);
@@ -1157,14 +1180,14 @@ function renderScoreBreakdown(candidate) {
   table.className = 'report-table';
   const thead = document.createElement('thead');
   const thr = document.createElement('tr');
-  ['연차','점수'].forEach((h) => { const th = document.createElement('th'); th.textContent = h; thr.appendChild(th); });
+  ['연차', '점수'].forEach((h) => { const th = document.createElement('th'); th.textContent = h; thr.appendChild(th); });
   thead.appendChild(thr); table.appendChild(thead);
   const tbody = document.createElement('tbody');
-  const order = ['R1','R2','R3','R4'];
+  const order = ['R1', 'R2', 'R3', 'R4'];
   for (const k of order) {
     const raw = candidate.perClassScore.get(k) ?? 0;
     const tr = document.createElement('tr');
-    [[k],[raw]].forEach((val) => { const td = document.createElement('td'); td.textContent = String(val); tr.appendChild(td); });
+    [[k], [raw]].forEach((val) => { const td = document.createElement('td'); td.textContent = String(val); tr.appendChild(td); });
     tbody.appendChild(tr);
   }
   table.appendChild(tbody);
@@ -1178,9 +1201,9 @@ function onExportXlsx() {
   if (!lastResult) return;
   const summaryRows = [];
   // Roster section
-  summaryRows.push([ { v: '당직표', style: 'Header' } ]);
+  summaryRows.push([{ v: '당직표', style: 'Header' }]);
   summaryRows.push([]);
-  summaryRows.push([ { v: '날짜', style: 'Header' }, { v: '병당', style: 'Header' }, { v: '응당', style: 'Header' }, { v: '응급 back', style: 'Header' } ]);
+  summaryRows.push([{ v: '날짜', style: 'Header' }, { v: '병당', style: 'Header' }, { v: '응당', style: 'Header' }, { v: '응급 back', style: 'Header' }]);
   const holidaySet = new Set(lastResult.holidays || []);
   for (const d of lastResult.schedule) {
     const names = d.duties.map((x) => x.name);
@@ -1201,22 +1224,22 @@ function onExportXlsx() {
   const prev = getPreviousStatsFromUI();
   const carryRows = buildCarryoverRows(lastResult, prev);
   summaryRows.push([]);
-  summaryRows.push([ { v: '다음달 반영', style: 'Header' } ]);
+  summaryRows.push([{ v: '다음달 반영', style: 'Header' }]);
   for (const r of carryRows) summaryRows.push(r);
   // 지난달 반영 section
   const prevRows = buildPreviousAdjustRows(lastResult, prev);
   summaryRows.push([]);
-  summaryRows.push([ { v: '지난달 반영', style: 'Header' } ]);
+  summaryRows.push([{ v: '지난달 반영', style: 'Header' }]);
   for (const r of prevRows) summaryRows.push(r);
 
   // ICS Links separate sheet
-  const linksRows = [ [ { v: '이름', style: 'Header' }, { v: 'ICS', style: 'Header' } ] ];
+  const linksRows = [[{ v: '이름', style: 'Header' }, { v: 'ICS', style: 'Header' }]];
   const base = getComputedIcsBase();
   const monthKey = monthKeyFromResult(lastResult) || dominantMonthKey();
   const version = (icsVersionInput?.value || '').trim() || 'v1';
-  linksRows.push([ { v: '월', style: 'Header' }, monthKey || '-' ]);
-  linksRows.push([ { v: '버전', style: 'Header' }, version ]);
-  linksRows.push([ { v: '기본 경로', style: 'Header' }, base || '미설정(링크 비활성)' ]);
+  linksRows.push([{ v: '월', style: 'Header' }, monthKey || '-']);
+  linksRows.push([{ v: '버전', style: 'Header' }, version]);
+  linksRows.push([{ v: '기본 경로', style: 'Header' }, base || '미설정(링크 비활성)']);
   for (const e of lastResult.employees) {
     if (!hasDutiesFor(lastResult, e.name)) continue;
     let cell = { v: '설정 필요' };
@@ -1225,13 +1248,13 @@ function onExportXlsx() {
       const href = joinUrl(base, encodeURIComponent(fname));
       cell = { v: `${e.name}.ics`, href };
     }
-    linksRows.push([ e.name, cell ]);
+    linksRows.push([e.name, cell]);
   }
   const xml = buildSpreadsheetXML([
     { name: 'Summary', rows: summaryRows },
     { name: 'ICS Links', rows: linksRows },
   ]);
-  const fileMonth = monthKey || (lastResult.startDate || '').slice(0,7) || 'YYYY-MM';
+  const fileMonth = monthKey || (lastResult.startDate || '').slice(0, 7) || 'YYYY-MM';
   const verSafe = String(version).replace(/[^\w\-\.]+/g, '_');
   download(`duty-roster-${fileMonth}-${verSafe}.xls`, xml);
 }
@@ -1250,7 +1273,7 @@ function onExportIcs() {
   }
   if (files.length === 0) return;
   const zip = buildZip(files);
-  const monthKey = dominantMonthKey() || (lastResult.startDate || '').slice(0,7) || 'YYYY-MM';
+  const monthKey = dominantMonthKey() || (lastResult.startDate || '').slice(0, 7) || 'YYYY-MM';
   const version = (icsVersionInput?.value || 'v1');
   const verSafe = String(version).replace(/[^\w\-\.]+/g, '_');
   download(`duty-roster-${monthKey}-${verSafe}.zip`, zip);
@@ -1338,7 +1361,7 @@ function guessIcsBaseURL(result) {
     const yymm = (result?.startDate || '').slice(0, 7) || '';
     if (isGh) return `${origin}/psy_duty/ics/${yymm}/`;
     if (path.includes('/psy_duty/')) return `${origin}/psy_duty/ics/${yymm}/`;
-  } catch {}
+  } catch { }
   return '';
 }
 
@@ -1352,7 +1375,7 @@ function getComputedIcsBase() {
     const url = new URL(window.location.href);
     const override = url.searchParams.get('ics_base');
     if (override) return override;
-  } catch {}
+  } catch { }
   const version = (icsVersionInput?.value || '').trim();
   if (!version) return '';
   const monthKey = dominantMonthKey();
@@ -1368,7 +1391,7 @@ function dominantMonthKey() {
     if (!range) return '';
     const counts = new Map();
     for (let d = new Date(range.start); d <= range.end; d = addDays(d, 1)) {
-      const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
       counts.set(key, (counts.get(key) || 0) + 1);
     }
     let best = ''; let max = -1;
@@ -1381,7 +1404,7 @@ function updateIcsPreview() {
   try {
     const base = getComputedIcsBase();
     if (icsPreview) icsPreview.textContent = base || '시작/종료일과 버전으로 자동 계산됩니다.';
-  } catch {}
+  } catch { }
 }
 
 function buildICS(result, opts = {}) {
@@ -1596,11 +1619,11 @@ function crc32(bytes) {
 }
 
 function buildCarryoverRows(result, prev) {
-  const rows = [[ { v: '연차', style: 'Header' }, { v: '항목', style: 'Header' }, { v: '이름', style: 'Header' }, { v: '보정치', style: 'Header' } ]];
+  const rows = [[{ v: '연차', style: 'Header' }, { v: '항목', style: 'Header' }, { v: '이름', style: 'Header' }, { v: '보정치', style: 'Header' }]];
   const { byungCount, eungCount, dayOff } = computeRoleAndOffCounts(result);
   const empById = new Map(result.employees.map((e) => [e.id, e]));
 
-  const order = ['R1','R2','R3','R4','기타'];
+  const order = ['R1', 'R2', 'R3', 'R4', '기타'];
   for (const klass of order) {
     if (!empById.size) continue;
     const peopleInClass = result.stats.filter(s => (empById.get(s.id)?.klass || '기타') === klass);
@@ -1609,14 +1632,14 @@ function buildCarryoverRows(result, prev) {
     const isR3 = klass === 'R3';
     const roles = isR3
       ? [
-          { key: 'duty', name: '당직', countMap: new Map([...peopleInClass.map(p => [p.id, (byungCount.get(p.id) || 0) + (eungCount.get(p.id) || 0)])]) },
-          { key: 'off', name: 'Day-off', countMap: dayOff },
-        ]
+        { key: 'duty', name: '당직', countMap: new Map([...peopleInClass.map(p => [p.id, (byungCount.get(p.id) || 0) + (eungCount.get(p.id) || 0)])]) },
+        { key: 'off', name: 'Day-off', countMap: dayOff },
+      ]
       : [
-          { key: 'byung', name: '병당', countMap: byungCount },
-          { key: 'eung', name: '응당', countMap: eungCount },
-          { key: 'off', name: 'Day-off', countMap: dayOff },
-        ];
+        { key: 'byung', name: '병당', countMap: byungCount },
+        { key: 'eung', name: '응당', countMap: eungCount },
+        { key: 'off', name: 'Day-off', countMap: dayOff },
+      ];
 
     for (const role of roles) {
       // For R3 'duty', combine byung and eung from previous stats
@@ -1646,34 +1669,34 @@ function buildCarryoverRows(result, prev) {
         rows.push([klass, role.name, '-', '-']);
       } else {
         for (const d of finalDeltas) {
-          rows.push([ klass, role.name, d.name, { v: signed(d.delta), style: d.delta > 0 ? 'Pos' : 'Neg' } ]);
+          rows.push([klass, role.name, d.name, { v: signed(d.delta), style: d.delta > 0 ? 'Pos' : 'Neg' }]);
         }
       }
     }
-    rows.push(['','','','']);
+    rows.push(['', '', '', '']);
   }
   return rows;
 }
 
 function buildPreviousAdjustRows(result, prev) {
-  const rows = [[ { v: '연차', style: 'Header' }, { v: '항목', style: 'Header' }, { v: '이름', style: 'Header' }, { v: '보정치', style: 'Header' } ]];
+  const rows = [[{ v: '연차', style: 'Header' }, { v: '항목', style: 'Header' }, { v: '이름', style: 'Header' }, { v: '보정치', style: 'Header' }]];
   const entriesBy = prev.entriesByClassRole || new Map();
-  const order = ['R1','R2','R3','R4','기타'];
+  const order = ['R1', 'R2', 'R3', 'R4', '기타'];
   for (const klass of order) {
     const rec = entriesBy.get(klass);
     if (!rec) continue;
     const isR3 = klass === 'R3';
     const sections = isR3
-      ? [ ['duty','당직'], ['off','Day-off'] ]
-      : [ ['byung','병당'], ['eung','응당'], ['off','Day-off'] ];
+      ? [['duty', '당직'], ['off', 'Day-off']]
+      : [['byung', '병당'], ['eung', '응당'], ['off', 'Day-off']];
     for (const [key, label] of sections) {
       const list = rec[key] || [];
       if (list.length === 0) continue;
       for (const e of list) {
-        rows.push([ klass, label, e.name, signed(Number(e.delta) || 0) ]);
+        rows.push([klass, label, e.name, signed(Number(e.delta) || 0)]);
       }
     }
-    rows.push(['','','','']);
+    rows.push(['', '', '', '']);
   }
   return rows;
 }
@@ -1719,8 +1742,8 @@ function computeCarryoverDeltas(entries) {
     id: e.id,
     delta: e.count - base,
   }))
-  .filter(d => d.delta !== 0)
-  .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta) || b.delta - a.delta);
+    .filter(d => d.delta !== 0)
+    .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta) || b.delta - a.delta);
 
   if (diagnostics) {
     console.log('[computeCarryoverDeltas] final deltas:', JSON.parse(JSON.stringify(deltas)));
@@ -1735,7 +1758,7 @@ function monthKeyFromResult(result) {
     const counts = new Map();
     for (const d of result.schedule || []) {
       const dt = new Date(d.date);
-      const key = `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}`;
+      const key = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}`;
       counts.set(key, (counts.get(key) || 0) + 1);
     }
     let best = ''; let max = -1;
@@ -1756,7 +1779,7 @@ function getTimeBudgetMsFromQuery() {
     const qs = new URLSearchParams(window.location.search);
     const v = Number(qs.get('budget'));
     if (Number.isFinite(v) && v > 200 && v < 30000) return Math.floor(v);
-  } catch {}
+  } catch { }
   return 5000; // default 5s to strengthen in-class balancing
 }
 
@@ -1868,7 +1891,7 @@ function renderWeeklyHours(result) {
     if (!groups.has(k)) groups.set(k, []);
     groups.get(k).push(s);
   }
-  const order = ['R1','R2','R3','R4','기타'];
+  const order = ['R1', 'R2', 'R3', 'R4', '기타'];
   for (const klass of order) {
     if (!groups.has(klass)) continue;
     const header = document.createElement('div');
@@ -1882,7 +1905,7 @@ function renderWeeklyHours(result) {
     const thr = document.createElement('tr');
     // Add new header for Average Weekly Hours
     const headers = ['이름', ...weekKeys, '합계', '주당 평균 시간'];
-    for (const h of headers) { const th = document.createElement('th'); th.textContent = h; thr.appendChild(th); }  
+    for (const h of headers) { const th = document.createElement('th'); th.textContent = h; thr.appendChild(th); }
     thead.appendChild(thr); table.appendChild(thead);
     const tbody = document.createElement('tbody');
     for (const s of groups.get(klass)) {
@@ -1899,7 +1922,7 @@ function renderWeeklyHours(result) {
       const totalDisplay = (Math.round(totalHours * 10) / 10).toFixed(1);
       const avgDisplay = (Math.round(avgWeeklyHours * 10) / 10).toFixed(1);
       const cells = [s.name, ...displayValues, totalDisplay, avgDisplay];
-      
+
       // Determine color based on avgWeeklyHours for '주당 평균 시간' column
       let avgColorClass = '';
       if (avgWeeklyHours >= 70) {
@@ -1922,7 +1945,7 @@ function renderWeeklyHours(result) {
         const td = document.createElement('td');
         td.textContent = String(val);
         if (idx >= 1) td.classList.add('num');
-        
+
         // Apply color to individual weekly cells
         if (idx >= 1 && idx <= weekKeys.length) { // Individual weekly cells
           const hours = values[idx - 1] || 0;
@@ -1986,7 +2009,7 @@ function renderCarryoverStats(result, opts = {}) {
   const prev = opts.previous || { sumByClassRole: new Map(), entriesByClassRole: new Map(), entries: [] };
   const empById = new Map(result.employees.map((e) => [e.id, e]));
 
-  const order = ['R1','R2','R3','R4','기타'];
+  const order = ['R1', 'R2', 'R3', 'R4', '기타'];
   for (const klass of order) {
     const peopleInClass = result.stats.filter(s => (empById.get(s.id)?.klass || '기타') === klass);
     if (!peopleInClass.length) continue;
@@ -2008,14 +2031,14 @@ function renderCarryoverStats(result, opts = {}) {
     const isR3 = klass === 'R3';
     const roles = isR3
       ? [
-          { key: 'duty', name: '당직', countMap: new Map([...peopleInClass.map(p => [p.id, (byungCount.get(p.id) || 0) + (eungCount.get(p.id) || 0)])]) },
-          { key: 'off', name: 'Day-off', countMap: dayOff },
-        ]
+        { key: 'duty', name: '당직', countMap: new Map([...peopleInClass.map(p => [p.id, (byungCount.get(p.id) || 0) + (eungCount.get(p.id) || 0)])]) },
+        { key: 'off', name: 'Day-off', countMap: dayOff },
+      ]
       : [
-          { key: 'byung', name: '병당', countMap: byungCount },
-          { key: 'eung', name: '응당', countMap: eungCount },
-          { key: 'off', name: 'Day-off', countMap: dayOff },
-        ];
+        { key: 'byung', name: '병당', countMap: byungCount },
+        { key: 'eung', name: '응당', countMap: eungCount },
+        { key: 'off', name: 'Day-off', countMap: dayOff },
+      ];
 
     for (const role of roles) {
       // For R3 'duty', combine byung and eung from previous stats
@@ -2200,7 +2223,7 @@ function renderPreviousStatsUI() {
       td.appendChild(input); tr.appendChild(td);
     } else {
       // Non-R3: Separate byung/eung columns
-      for (const role of ['byung','eung']) {
+      for (const role of ['byung', 'eung']) {
         const td = document.createElement('td'); td.classList.add('num');
         const input = document.createElement('input');
         input.type = 'number'; input.step = '1'; input.value = '0';
@@ -2297,16 +2320,16 @@ function currentDateRange() {
 
 function fixedKRHolidays(year) {
   // 네트워크 실패 시 최소한의 고정일 공휴일 제공
-  const mk = (m, d) => `${year}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+  const mk = (m, d) => `${year}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
   return new Set([
-    mk(1,1),   // 신정
-    mk(3,1),   // 삼일절
-    mk(5,5),   // 어린이날
-    mk(6,6),   // 현충일
-    mk(8,15),  // 광복절
-    mk(10,3),  // 개천절
-    mk(10,9),  // 한글날
-    mk(12,25), // 성탄절
+    mk(1, 1),   // 신정
+    mk(3, 1),   // 삼일절
+    mk(5, 5),   // 어린이날
+    mk(6, 6),   // 현충일
+    mk(8, 15),  // 광복절
+    mk(10, 3),  // 개천절
+    mk(10, 9),  // 한글날
+    mk(12, 25), // 성탄절
   ]);
 }
 
@@ -2329,7 +2352,7 @@ function renderPersonalStats(result) {
     if (!groups.has(k)) groups.set(k, []);
     groups.get(k).push(s);
   }
-  const order = ['R1','R2','R3','R4','기타'];
+  const order = ['R1', 'R2', 'R3', 'R4', '기타'];
   for (const klass of order) {
     if (!groups.has(klass)) continue;
     const header = document.createElement('div');

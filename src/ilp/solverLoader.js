@@ -9,15 +9,56 @@ function buildScriptUrl(forceReload = false) {
 }
 
 export function ensureSolver({ forceReload = false } = {}) {
+  // Web Worker environment support
+  if (typeof self !== 'undefined' && typeof window === 'undefined') {
+    if (forceReload) {
+      self.solver = undefined;
+    }
+    if (self.solver) {
+      return Promise.resolve(self.solver);
+    }
+    const src = buildScriptUrl(forceReload);
+
+
+    // Try importScripts if available (Classic Worker)
+    if (typeof importScripts === 'function') {
+      try {
+        importScripts(src);
+        if (self.solver) return Promise.resolve(self.solver);
+      } catch (e) {
+        // Continue to fallback
+      }
+    }
+
+    // Fallback for Module Worker (where importScripts is disabled)
+    // We fetch and eval because solver.min.js is not an ES module.
+    return fetch(src)
+      .then(res => {
+        if (!res.ok) throw new Error(`Fetch failed: ${res.status} ${res.statusText}`);
+        return res.text();
+      })
+      .then(code => {
+        // Indirect eval to execute in global scope
+        (0, eval)(code);
+        if (self.solver) {
+          return self.solver;
+        }
+        throw new Error('LP solver script executed but self.solver not found.');
+      })
+      .catch(e => {
+        throw new Error(`Failed to load LP solver in worker: ${e.message}`);
+      });
+  }
+
   if (typeof window === 'undefined') {
-    throw new Error('ILP solver는 브라우저 환경에서만 사용할 수 있습니다.');
+    throw new Error('ILP solver는 브라우저 또는 Web Worker 환경에서만 사용할 수 있습니다.');
   }
 
   if (forceReload) {
     solverPromise = null;
     // For this solver, it attaches itself to `window.solver`.
     // Setting it to undefined is enough before reloading.
-    window.solver = undefined; 
+    window.solver = undefined;
   }
 
   if (window.solver) {

@@ -90,6 +90,7 @@ async function runScenario(playwright, harnessUrl, headless) {
   const context = await browser.newContext();
   const page = await context.newPage();
   console.log(`[runner] navigating to ${harnessUrl}`);
+  page.on('console', msg => console.log(`[BROWSER] ${msg.text()}`));
   await page.goto(harnessUrl, { waitUntil: 'networkidle' });
   console.log('[runner] waiting for harness to finish...');
   await page.waitForFunction(() => window.__HARNESS_DONE__ === true, { timeout: 120000 });
@@ -134,7 +135,7 @@ async function main() {
   } finally {
     if (server && !server.killed) {
       server.kill('SIGINT');
-      await once(server, 'exit').catch(() => {});
+      await once(server, 'exit').catch(() => { });
     }
   }
 }

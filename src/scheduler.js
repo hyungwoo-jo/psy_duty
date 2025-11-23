@@ -1,7 +1,7 @@
 import { ensureSolver } from './ilp/solverLoader.js';
 import { addDays, isWorkday, weekKeyByMode, fmtDate, rangeDays, allWeekKeysInRange } from './time.js';
 
-const solver = typeof window !== 'undefined' ? await ensureSolver() : null;
+const solver = (typeof window !== 'undefined' || typeof self !== 'undefined') ? await ensureSolver() : null;
 
 const DUTY_HOURS = { weekday: 13.5, weekend: 21 };
 const REGULAR_HOURS = 8;
@@ -535,7 +535,7 @@ function buildModel(ctx) {
       const maxBy = capBy.get(person.id);
       const minBy = minCapBy.get(person.id);
       if (Number.isFinite(maxBy)) {
-        model.constraints[roleCapConstraint(person.id, 'byung')] = { 
+        model.constraints[roleCapConstraint(person.id, 'byung')] = {
           min: minBy - (person.carryover.byung || 0),
           max: maxBy - (person.carryover.byung || 0),
         };
@@ -543,7 +543,7 @@ function buildModel(ctx) {
       const maxEu = capEu.get(person.id);
       const minEu = minCapEu.get(person.id);
       if (Number.isFinite(maxEu)) {
-        model.constraints[roleCapConstraint(person.id, 'eung')] = { 
+        model.constraints[roleCapConstraint(person.id, 'eung')] = {
           min: minEu - (person.carryover.eung || 0),
           max: maxEu - (person.carryover.eung || 0),
         };
@@ -924,7 +924,7 @@ function rebuildLedger({ ctx, schedule }) {
           hoursForThisDay += DUTY_HOURS.weekend; // Only duty hours
         }
       }
-      
+
       if (hoursForThisDay > 0) {
         p.weeklyHours[weekKey] = (p.weeklyHours[weekKey] || 0) + hoursForThisDay;
       }
@@ -934,15 +934,15 @@ function rebuildLedger({ ctx, schedule }) {
 
   // Step 3: Recalculate simple stats after all hours are calculated
   for (const cell of schedule) {
-      const workday = isWorkday(cell.date, holidaySet);
-      (cell.duties || []).forEach((duty, slot) => {
-          const p = byId.get(duty?.id);
-          if (!p) return;
-          p.dutyCount += 1;
-          p._dutyHoursAccum += workday ? (DUTY_HOURS.weekday + REGULAR_HOURS) : DUTY_HOURS.weekend;
-          if (workday) p.weekdayDutyCount += 1; else p.weekendDutyCount += 1;
-          if (slot === 0) p._byung += 1; else if (slot === 1) p._eung += 1;
-      });
+    const workday = isWorkday(cell.date, holidaySet);
+    (cell.duties || []).forEach((duty, slot) => {
+      const p = byId.get(duty?.id);
+      if (!p) return;
+      p.dutyCount += 1;
+      p._dutyHoursAccum += workday ? (DUTY_HOURS.weekday + REGULAR_HOURS) : DUTY_HOURS.weekend;
+      if (workday) p.weekdayDutyCount += 1; else p.weekendDutyCount += 1;
+      if (slot === 0) p._byung += 1; else if (slot === 1) p._eung += 1;
+    });
   }
 
   return people;
