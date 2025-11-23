@@ -1,19 +1,19 @@
 import { fmtDate, addDays, weekKey } from './time.js';
 
 export const SCORE_DEFAULTS = {
-    overtimeSoft: 1,
-    overtimeHard: 2,
-    underwork: 1,
+    overtimeSoft: 5,
+    overtimeHard: 10,
+    underwork: 0,
     dayoffBase: 0.5,
     dayoffIncrement: 1,
     roleBase: 1,
     roleIncrement: 1,
     roleSpread: 1,
-    gapPenalty: 0.5,
+    gapPenalty: 0,
     r1WeeklyOver: 10,
     r3WeeklyOver: 10,
     r2WeeklyUnder: 10,
-    friSunPenalty: 1,
+    friSunPenalty: 0,
 };
 
 export const SCORE_CLASSES = ['R1', 'R2', 'R3', 'R4'];

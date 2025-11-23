@@ -297,7 +297,7 @@ export function getGenerationParams() {
         vacations: parseVacationRanges(vacationsInput.value),
         priorDayDuty: getPriorDayDutyFromUI(),
         prior2DayDuty: getPrior2DayDutyFromUI(),
-        retryAttempts: Number(retryAttemptsInput?.value || 1000),
+        retryAttempts: Number(retryAttemptsInput?.value || 5000),
 
         // Toggles
         enforceR3Balance: readToggle(toggleR3Balance),

@@ -101,13 +101,15 @@ export function renderCalendar(startInput, endInput, weeksInput, holidaysInput, 
 
       const cell = document.createElement('div');
       cell.className = 'calendar-cell';
+      const isWeekend = date.getDay() === 0 || date.getDay() === 6;
       if (!inRange) cell.classList.add('out-of-range');
       if (isHoliday) cell.classList.add('holiday');
+      if (isWeekend) cell.classList.add('weekend');
 
       // Date label
       const dateLabel = document.createElement('div');
       dateLabel.className = 'calendar-date';
-      dateLabel.textContent = `${date.getMonth()+1}/${date.getDate()}`;
+      dateLabel.textContent = `${date.getMonth() + 1}/${date.getDate()}`;
       cell.appendChild(dateLabel);
 
       if (inRange) {

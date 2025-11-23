@@ -483,10 +483,10 @@ details>fieldset,
 
 /* Roster Highlighting */
 .report-table tr.weekend {
-  background-color: #fff1f2;
+  background-color: #e0f2fe;
 }
 
-/* Very light red */
+/* Sky blue */
 .report-table tr.holiday {
   background-color: #fffbeb;
 }
@@ -494,7 +494,7 @@ details>fieldset,
 /* Very light amber */
 
 .report-table tr.weekend td:first-child {
-  color: #be123c;
+  color: #0369a1;
   font-weight: 700;
 }
 
@@ -570,6 +570,10 @@ details>fieldset,
 
 .calendar-cell.holiday {
   background-color: #fffbeb;
+}
+
+.calendar-cell.weekend {
+  background-color: #e0f2fe;
 }
 
 .calendar-cell.out-of-range {
