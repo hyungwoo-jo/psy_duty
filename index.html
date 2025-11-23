@@ -1,286 +1,299 @@
 <!doctype html>
 <html lang="ko">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>PSY 당직표</title>
-    <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="assets/styles.css" />
-  </head>
-  <body>
-    <header>
-      <h1>PSY 당직표</h1>
-    </header>
 
-    <section class="controls">
-      <div class="field">
-        <label for="start-date">시작일</label>
-        <input id="start-date" type="date" />
-      </div>
-      <div class="field">
-        <label for="end-date">종료일</label>
-        <input id="end-date" type="date" />
-      </div>
-      <div class="field">
-        <label for="weeks">주 수(종료일 미지정 시)</label>
-        <input id="weeks" type="number" min="1" max="8" value="4" />
-      </div>
-      <div class="field">
-        <label for="retry-attempts">재시도 횟수</label>
-        <input id="retry-attempts" type="number" min="1" value="500" />
-      </div>
-      
-      <!-- 당직 인원 고정: 병당 1, 응당 1 (UI 옵션 제거) -->
-      <div class="field field--full">
-        <label for="holidays">공휴일 지정</label>
-        <div style="display:flex; gap:8px; align-items:flex-start; flex-wrap: wrap;">
-          <textarea id="holidays" rows="4" placeholder="예시:&#10;2025-01-01&#10;-2025-02-28 (빼기)"></textarea>
-          <div style="display:flex; flex-direction: column; gap:6px;">
-            <button type="button" id="load-kr-holidays">공휴일 불러오기</button>
-            <button type="button" id="clear-holidays">공휴일 비우기</button>
-          </div>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PSY 당직표</title>
+  <link rel="icon" href="data:," />
+  <link rel="stylesheet" href="assets/styles.css" />
+
+</head>
+
+<body>
+  <header>
+    <h1>PSY 당직표</h1>
+  </header>
+
+  <section class="controls">
+    <!-- 기본 설정 -->
+    <div class="field">
+      <label for="start-date">시작일</label>
+      <input id="start-date" type="date" />
+    </div>
+    <div class="field">
+      <label for="end-date">종료일</label>
+      <input id="end-date" type="date" />
+    </div>
+    <div class="field">
+      <label for="weeks">주 수 (종료일 미지정 시)</label>
+      <input id="weeks" type="number" min="1" max="8" value="4" />
+    </div>
+    <div class="field">
+      <label for="retry-attempts">최적화 시도 횟수</label>
+      <input id="retry-attempts" type="number" min="1" step="100" value="1000" />
+    </div>
+
+    <!-- 공휴일 -->
+    <div class="field field--full">
+      <label for="holidays">공휴일 관리</label>
+      <div style="display:grid; grid-template-columns: 1fr auto; gap:1rem;">
+        <textarea id="holidays" rows="4" placeholder="예시:&#10;2025-01-01&#10;-2025-02-28 (제외)"></textarea>
+        <div style="display:flex; flex-direction: column; gap:0.5rem;">
+          <button type="button" id="load-kr-holidays">자동 불러오기</button>
+          <button type="button" id="clear-holidays">초기화</button>
         </div>
-      </div>
-
-      <div class="field field--full">
-        <label>달력 편집</label>
-        <div style="display:flex; gap:8px; align-items:center; flex-wrap: wrap;">
-          <button type="button" id="show-calendar">달력 불러오기</button>
-          <span class="legend">공휴일 불러오기 후 달력을 열어 슬롯/강제배정을 설정하세요</span>
-        </div>
-        <div id="calendar-container" style="display:none; margin-top:12px;"></div>
-      </div>
-
-      <div class="field field--full">
-        <label for="employees">근무자 목록</label>
-        <textarea id="employees" rows="12" placeholder="형식 예시:
-R1 장주만
-R1 조형우
-R2 김대근
-R2 김진아
-R2 이수연
-R3 권지영, 소아
-R3 김선민
-R3 윤준성
-R4 김지영
-R4 김현태
-R4 이동인"></textarea>
-      </div>
-      <script>
-        // 초기 기본 근무자: 고정 12인 + 연차 라벨(R1~R4)
-        window.addEventListener('DOMContentLoaded', () => {
-          const el = document.querySelector('#employees');
-          if (el) el.value = [
-            'R1 윤성민',
-            'R1 장주만',
-            'R1 조형우',
-            'R2 김대근',
-            'R2 김진아',
-            'R2 이수연',
-            'R3 권지영, 소아',
-            'R3 김선민',
-            'R3 윤준성, 응급',
-            'R4 김지영',
-            'R4 김현태',
-            'R4 이동인',
-          ].join('\n');
-        });
-      </script>
-
-      <div class="field field--full" style="display:none;">
-        <details>
-          <summary>부가 입력 (불가일/희망일/휴가)</summary>
-          <div style="margin-top:12px;">
-            <div class="field field--full">
-              <label for="unavailable">당직 불가일</label>
-              <textarea id="unavailable" rows="5" placeholder="예시:
-장주만: 2025-01-07, 2025-01-15
-조형우: 2025-01-10 | 2025-01-11
-윤성민: 2025-01-04
-"></textarea>
-            </div>
-            <div class="field field--full">
-              <label for="dayoff-wish">Day-off 희망일(평일)</label>
-              <textarea id="dayoff-wish" rows="4" placeholder="예시:&#10;장주만: 2025-01-09, 2025-01-23&#10;조형우: 2025-01-16"></textarea>
-            </div>
-            <div class="field field--full">
-              <label for="vacations">휴가</label>
-              <textarea id="vacations" rows="4" placeholder="예시:&#10;장주만: 2025-01-06~2025-01-12&#10;조형우: 2025-01-20~2025-01-22, 2025-02-03~2025-02-04"></textarea>
-            </div>
-          </div>
-        </details>
-      </div>
-
-      <div class="field field--full">
-        <details>
-          <summary>Ruleset</summary>
-          <fieldset>
-            <div class="checkbox-group">
-              <div class="legend">※ 주간 근무시간 상한은 80시간으로 설정되어 있습니다. R1/R2/R3 주간 당직 제약은 Scoring 섹션의 각 연차 탭에서 페널티로 조정할 수 있습니다.</div>
-              <div>
-                <input type="checkbox" id="toggle-r3-balance" checked />
-                <label for="toggle-r3-balance">비소아 R3 듀오 균형</label>
-                <small>소아과 태그가 없는 R3 두 명이 있다면 병당·응당·Day-off 횟수를 균등하게 맞춥니다.</small>
-              </div>
-              <div>
-                <input type="checkbox" id="toggle-dayoff-wish" checked />
-                <label for="toggle-dayoff-wish">Day-off 희망일 반영</label>
-                <small>희망한 날짜를 Day-off로 확보할 수 있도록 전날에 당직을 배정합니다.</small>
-              </div>
-              <div>
-                <input type="checkbox" id="toggle-dayoff-trailing" checked />
-                <label for="toggle-dayoff-trailing">Day-off 집계: 종료 다음날 반영</label>
-                <small>체크 시 시작 전날 보정은 제외하고, 달 마지막 당직 다음 평일을 Day-off로 계산합니다.</small>
-              </div>
-              <div>
-                <input type="checkbox" id="toggle-r3-ped-wed" checked />
-                <label for="toggle-r3-ped-wed">R3 소아과 수요일 금지</label>
-                <small>소아과 태그가 있는 R3는 수요일에는 당직에 배치하지 않습니다.</small>
-              </div>
-              <div>
-                <input type="checkbox" id="toggle-vacation-ban" checked />
-                <label for="toggle-vacation-ban">휴가일 근무 금지</label>
-                <small>휴가로 입력된 날짜에는 당직을 배치하지 않습니다.</small>
-              </div>
-              <div>
-                <input type="checkbox" id="toggle-unavailable-ban" checked />
-                <label for="toggle-unavailable-ban">당직 불가일 금지</label>
-                <small>개인 불가일로 지정된 날짜에는 당직을 배치하지 않습니다.</small>
-              </div>
-              <div>
-                <input type="checkbox" id="role-hardcap-toggle" />
-                <label for="role-hardcap-toggle">역할 편차 완화 모드</label>
-                <small id="role-hardcap-mode-label">체크하면 역할 편차를 ±2까지 허용합니다. (미체크 시 ±1입니다.)</small>
-              </div>
-              <div>
-                <input type="checkbox" id="exclude-r4-mode" checked />
-                <label for="exclude-r4-mode">R4 제외 모드</label>
-                <small>화요일 응당을 소아 제외 2,3년차로 격주 교대 배정합니다 (1주차: R2, 2주차: R3, ...).</small>
-              </div>
-            </div>
-          </fieldset>
-        </details>
-      </div>
-
-      <div class="field field--full">
-        <details>
-          <summary>Scoring</summary>
-          <fieldset>
-            <div class="checkbox-group">
-              <div class="legend">연차 선택</div>
-              <div class="score-tabs" id="score-class-tabs" role="tablist" aria-label="Scoring class">
-                <button type="button" role="tab" aria-selected="true" aria-pressed="true" data-klass="R1">R1</button>
-                <button type="button" role="tab" aria-selected="false" aria-pressed="false" data-klass="R2">R2</button>
-                <button type="button" role="tab" aria-selected="false" aria-pressed="false" data-klass="R3">R3</button>
-                <button type="button" role="tab" aria-selected="false" aria-pressed="false" data-klass="R4">R4</button>
-              </div>
-              <div id="score-class-indicator" class="legend">현재: R1</div>
-              <div><label for="score-overtime-soft" title="주간 근무시간이 72시간을 초과하고 75시간 미만일 때, 1건당 부과되는 점수입니다.">시간 초과 (72-75h) 점수</label><input type="number" id="score-overtime-soft" value="1" step="0.5" /></div>
-              <small>한 주 총 근무 시간이 72~75시간이면 여기서 지정한 페널티를 부과합니다.</small>
-              <div><label for="score-overtime-hard" title="주간 근무시간이 75시간 이상일 때, 1건당 부과되는 점수입니다.">고도 시간 초과 (>=75h) 점수</label><input type="number" id="score-overtime-hard" value="2" step="0.5" /></div>
-              <small>한 주에 75시간 이상 근무한 인원에게는 이 값만큼 추가 페널티가 부과됩니다.</small>
-              <div><label for="score-under-40" title="주간 근무시간이 40시간 미만일 때, 1건당 부과되는 점수입니다.">40h 미만 근무 주 점수</label><input type="number" id="score-under-40" value="1" step="0.5" /></div>
-              <small>주당 근무 시간이 40시간 아래로 떨어진 경우 균형을 맞추기 위한 페널티입니다.</small>
-              <div><label for="score-dayoff-base" title="Day-off 편차가 1일일 때 부과되는 기본 점수입니다.">Day-off 편차 기본 점수</label><input type="number" id="score-dayoff-base" value="0.5" step="0.1" /></div>
-              <small>연차 내 평균 대비 Day-off 편차가 1일 있을 때 적용되는 기본 페널티입니다.</small>
-              <div><label for="score-dayoff-increment" title="Day-off 편차가 1일을 초과할 때 늘어나는 추가 점수입니다.">Day-off 편차 추가 점수</label><input type="number" id="score-dayoff-increment" value="1" step="0.1" /></div>
-              <small>Day-off 편차가 2일 이상 벌어질 때마다 누적되는 추가 페널티입니다.</small>
-              <div><label for="score-role-base" title="병당/응당 역할 횟수가 1회 어긋났을 때 부과되는 기본 점수입니다.">역할 편차 기본 점수</label><input type="number" id="score-role-base" value="1" step="0.1" /></div>
-              <small>병당/응당 역할 횟수가 평균에서 1회 벗어났을 때 적용되는 기본 페널티입니다.</small>
-              <div><label for="score-role-increment" title="역할 편차가 1회를 초과할 때 늘어나는 추가 점수입니다.">역할 편차 추가 점수</label><input type="number" id="score-role-increment" value="1" step="0.1" /></div>
-              <small>역할 편차가 2회 이상 벌어질 때마다 누적되는 추가 페널티입니다.</small>
-              <div><label for="score-role-spread" title="같은 연차 내에서 역할 편차가 +1과 -1로 동시에 갈라질 때 부과되는 점수입니다.">역할 편차 확산 페널티</label><input type="number" id="score-role-spread" value="1" step="0.5" /></div>
-              <small>같은 연차에서 역할 편차가 +1과 -1로 동시에 나타나면 이 점수가 한 번 더 부과됩니다.</small>
-              <div><label for="score-gap2" title="당직-휴무-당직(OFF 하나 사이)로 반복될 때 부과되는 점수입니다.">OFF 하나 간격 반복(당직-휴무-당직) 페널티</label><input type="number" id="score-gap2" value="0.5" step="0.5" /></div>
-              <small>전날 한 번 쉬고 다시 당직에 투입되는 패턴을 줄이고 싶을 때 사용합니다.</small>
-              <div><label for="score-fri-sun" title="같은 주 금요일과 일요일 당직을 동일 인원이 맡은 경우 부과되는 점수입니다.">금·일 동시 당직 페널티</label><input type="number" id="score-fri-sun" value="1" step="0.5" /></div>
-              <small>같은 주 금요일과 일요일을 모두 맡은 인원에게 추가 부담을 줄이고 싶을 때 사용합니다.</small>
-              <div data-class-only="R1"><label for="score-r1-weekly-over" title="R1이 한 주에 3회 이상 당직을 서게 될 때 부과되는 점수입니다.">R1 주당 3회 이상 페널티</label><input type="number" id="score-r1-weekly-over" value="10" step="0.5" /></div>
-              <small data-class-only="R1">R1 연차에서 한 주에 3회 이상 당직 시 페널티를 부과합니다.</small>
-              <div data-class-only="R3"><label for="score-r3-weekly-over" title="R3이 한 주에 2회 이상 당직을 서게 될 때 부과되는 점수입니다.">R3 주당 2회 이상 페널티</label><input type="number" id="score-r3-weekly-over" value="10" step="0.5" /></div>
-              <small data-class-only="R3">R3 연차에서 한 주에 2회 이상 당직 시 페널티를 부과합니다.</small>
-              <div data-class-only="R2"><label for="score-r2-weekly-under" title="R2가 한 주에 당직이 없을 때 부과되는 점수입니다.">R2 주당 0회 페널티</label><input type="number" id="score-r2-weekly-under" value="10" step="0.5" /></div>
-              <small data-class-only="R2">R2 연차에서 한 주에 당직이 없으면 페널티를 부과합니다.</small>
-
-            </div>
-          </fieldset>
-        </details>
-      </div>
-      <div class="field field--full">
-        <label>전일 당직(시작일 전날): 월요일 시작 시 전날 일요일 당직자를 지정하세요</label>
-        <div style="display:flex; gap:10px; flex-wrap: wrap; align-items: center;">
-          <div>
-            <div class="legend">전일 병당</div>
-            <input id="prior-byung" type="text" placeholder="이름" />
-          </div>
-          <div>
-            <div class="legend">전일 응당</div>
-            <input id="prior-eung" type="text" placeholder="이름" />
-          </div>
-          <div class="legend">전날이 주말/공휴일이면 시작일은 Day-off(정규/당직 제외)로 처리됩니다.</div>
-        </div>
-      </div>
-      <div class="field field--full">
-        <label>전전일 당직(시작일 이틀 전): 예) 월요일 시작 시 전전날(토요일) 당직자를 지정하세요</label>
-        <div style="display:flex; gap:10px; flex-wrap: wrap; align-items: center;">
-          <div>
-            <div class="legend">전전일 병당</div>
-            <input id="prior2-byung" type="text" placeholder="이름" />
-          </div>
-          <div>
-            <div class="legend">전전일 응당</div>
-            <input id="prior2-eung" type="text" placeholder="이름" />
-          </div>
-          <div class="legend">당직-휴무-당직 패턴을 정확히 계산하기 위해 전전일 당직자 정보를 활용합니다.</div>
-        </div>
-      </div>
-      <div class="field">
-        <label for="ics-version">ICS 버전명(예: v3)</label>
-        <input id="ics-version" type="text" placeholder="v1" />
-      </div>
-      <div class="field" style="min-width: 380px;">
-        <label>ICS 링크 기준 경로(자동)</label>
-        <div id="ics-preview" class="legend">시작/종료일과 버전으로 자동 계산됩니다.</div>
-        <div class="legend">필요 시 URL 쿼리 ?ics_base=... 로 강제 지정 가능</div>
-      </div>
-      <div class="field field--full">
-        <label>지난달 반영</label>
-        <div id="prev-stats-ui"></div>
-      </div>
-
-      <div class="field field--toggle">
-        <label for="toggle-diagnostics" class="toggle-switch">
-          <input type="checkbox" id="toggle-diagnostics">
-          <span>diagnostics</span>
-        </label>
-      </div>
-      <div class="actions">
-        <button id="generate">당직표 생성</button>
-        <button id="export-xlsx" disabled>Excel 내보내기</button>
-        <button id="export-ics" disabled>ICS 내보내기</button>
-      </div>
-      <div id="messages" class="messages" aria-live="polite"></div>
-    </section>
-
-    <!-- 로딩 오버레이 -->
-    <div id="loading-overlay" class="loading-overlay" aria-hidden="true">
-      <div class="loading-box">
-        <div class="spinner" aria-hidden="true"></div>
-        <div class="loading-text">당직표 생성 중… 잠시만 기다려주세요</div>
       </div>
     </div>
 
-    <section>
-      <div id="summary" class="summary"></div>
-      <div id="report" class="report"></div>
-      <div class="legend">역할: 병당 1 · 응당 1 (매일). R3 소아턴은 수요일 당직 제외. R3 응급 태그 인원은 월간 응급 back.</div>
-      <div id="roster" class="roster"></div>
-    </section>
+    <!-- 달력 편집 -->
+    <div class="field field--full">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.5rem;">
+        <label style="margin:0;">상세 달력 편집</label>
+        <button type="button" id="show-calendar" style="font-size:0.8rem; padding:0.4rem 0.8rem;">달력 열기</button>
+      </div>
+      <div class="legend">공휴일 불러오기 후 달력을 열어 슬롯/강제배정을 설정하세요</div>
+      <div id="calendar-container" style="display:none; margin-top:1rem;"></div>
+    </div>
 
-    <footer>
-      <small>오픈소스 초안 — 정교화 필요 시 규칙/데이터 확장 가능</small>
-    </footer>
+    <!-- 근무자 목록 -->
+    <div class="field field--full">
+      <label>근무자 목록 (연차별 입력)</label>
+      <div class="employee-grid">
+        <div class="emp-group">
+          <label for="emp-r1" class="tag R1">R1 (1년차)</label>
+          <textarea id="emp-r1" placeholder="이름 (예: 김철수)"></textarea>
+        </div>
+        <div class="emp-group">
+          <label for="emp-r2" class="tag R2">R2 (2년차)</label>
+          <textarea id="emp-r2" placeholder="이름 (예: 이영희)"></textarea>
+        </div>
+        <div class="emp-group">
+          <label for="emp-r3" class="tag R3">R3 (3년차)</label>
+          <textarea id="emp-r3" placeholder="이름 (예: 박민수)"></textarea>
+        </div>
+        <div class="emp-group">
+          <label for="emp-r4" class="tag R4">R4 (4년차)</label>
+          <textarea id="emp-r4" placeholder="이름 (예: 정수진)"></textarea>
+        </div>
+      </div>
+      <small>각 줄에 한 명씩 입력하세요. 이름 뒤에 '소아', '응급' 등을 적어 속성을 지정할 수 있습니다.</small>
+    </div>
 
-    <script type="module" src="src/app.js"></script>
-  </body>
-  </html>
+
+    <!-- 부가 입력 -->
+    <div class="field field--full">
+      <details>
+        <summary>부가 입력 (불가일 / 희망일 / 휴가)</summary>
+        <div style="padding: 1.5rem; display: grid; gap: 1.5rem;">
+          <div>
+            <label for="unavailable">당직 불가일</label>
+            <textarea id="unavailable" rows="3" placeholder="이름: YYYY-MM-DD, ..."></textarea>
+          </div>
+          <div>
+            <label for="dayoff-wish">Day-off 희망일 (평일)</label>
+            <textarea id="dayoff-wish" rows="3" placeholder="이름: YYYY-MM-DD, ..."></textarea>
+          </div>
+          <div>
+            <label for="vacations">휴가</label>
+            <textarea id="vacations" rows="3" placeholder="이름: YYYY-MM-DD~YYYY-MM-DD"></textarea>
+          </div>
+        </div>
+      </details>
+    </div>
+
+    <!-- Ruleset -->
+    <div class="field field--full">
+      <details>
+        <summary>규칙 설정 (Ruleset)</summary>
+        <div class="checkbox-group">
+          <div class="legend" style="margin-bottom:1rem;">※ 제약 조건 (중요도 순)</div>
+
+          <div>
+            <label><input type="checkbox" id="toggle-weekly-hour-cap" checked /> 주간 근무시간 상한 (80h)</label>
+            <small>체크하면 주당 근무시간을 80시간으로 제한합니다. 해제 시 시간 제약이 없습니다.</small>
+          </div>
+          <div>
+            <label><input type="checkbox" id="toggle-r3-ped-wed" checked /> R3 소아과 수요일 금지</label>
+            <small>소아과 태그가 있는 R3는 수요일에는 당직에 배치하지 않습니다.</small>
+          </div>
+          <div>
+            <label><input type="checkbox" id="role-hardcap-toggle" /> 역할 편차 완화 모드</label>
+            <small id="role-hardcap-mode-label">체크하면 역할 편차를 ±2까지 허용합니다.</small>
+          </div>
+          <div>
+            <label><input type="checkbox" id="dayoff-balance-toggle" checked /> Day-off 균형 제약</label>
+            <small>체크하면 Day-off 편차를 ±2로 제한합니다. 해제 시 Scoring만으로 조정합니다.</small>
+          </div>
+          <div>
+            <label><input type="checkbox" id="toggle-dayoff-trailing" checked /> Day-off 집계: 종료 다음날 반영</label>
+            <small>체크 시 시작 전날 보정은 제외하고, 달 마지막 당직 다음 평일을 Day-off로 계산합니다.</small>
+          </div>
+          <div>
+            <label><input type="checkbox" id="toggle-r3-balance" /> 비소아 R3 듀오 균형</label>
+            <small>소아과 태그가 없는 R3 두 명이 있다면 병당·응당·Day-off 횟수를 균등하게 맞춥니다.</small>
+          </div>
+
+          <!-- 숨긴 토글들 (달력으로 대체) -->
+          <input type="checkbox" id="toggle-dayoff-wish" style="display:none;" />
+          <input type="checkbox" id="toggle-vacation-ban" style="display:none;" />
+          <input type="checkbox" id="toggle-unavailable-ban" style="display:none;" />
+          <input type="checkbox" id="exclude-r4-mode" style="display:none;" />
+        </div>
+      </details>
+    </div>
+
+    <!-- Scoring -->
+    <div class="field field--full">
+      <details>
+        <summary>점수 설정 (Scoring)</summary>
+        <div style="padding: 1.5rem;">
+          <div class="legend" style="margin-bottom:0.5rem;">연차별 가중치 설정</div>
+          <div class="score-tabs" id="score-class-tabs" role="tablist">
+            <button type="button" role="tab" aria-selected="true" aria-pressed="true" data-klass="R1">R1</button>
+            <button type="button" role="tab" aria-selected="false" aria-pressed="false" data-klass="R2">R2</button>
+            <button type="button" role="tab" aria-selected="false" aria-pressed="false" data-klass="R3">R3</button>
+            <button type="button" role="tab" aria-selected="false" aria-pressed="false" data-klass="R4">R4</button>
+          </div>
+          <div id="score-class-indicator" class="legend" style="margin-bottom:1rem; color:var(--primary-color);">현재:
+            R1
+          </div>
+
+          <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap:1.5rem;">
+            <div>
+              <label for="score-overtime-soft">시간 초과 (72-75h)</label>
+              <input type="number" id="score-overtime-soft" value="1" step="0.5" />
+            </div>
+            <div>
+              <label for="score-overtime-hard">고도 시간 초과 (>=75h)</label>
+              <input type="number" id="score-overtime-hard" value="2" step="0.5" />
+            </div>
+            <div>
+              <label for="score-under-40">40h 미만 근무 주</label>
+              <input type="number" id="score-under-40" value="1" step="0.5" />
+            </div>
+            <div>
+              <label for="score-dayoff-base">Day-off 편차 기본</label>
+              <input type="number" id="score-dayoff-base" value="0.5" step="0.1" />
+            </div>
+            <div>
+              <label for="score-dayoff-increment">Day-off 편차 추가</label>
+              <input type="number" id="score-dayoff-increment" value="1" step="0.1" />
+            </div>
+            <div>
+              <label for="score-role-base">역할 편차 기본</label>
+              <input type="number" id="score-role-base" value="1" step="0.1" />
+            </div>
+            <div>
+              <label for="score-role-increment">역할 편차 추가</label>
+              <input type="number" id="score-role-increment" value="1" step="0.1" />
+            </div>
+            <div>
+              <label for="score-role-spread">역할 편차 확산</label>
+              <input type="number" id="score-role-spread" value="1" step="0.5" />
+            </div>
+            <div>
+              <label for="score-gap2">OFF 하나 간격 반복</label>
+              <input type="number" id="score-gap2" value="0.5" step="0.5" />
+            </div>
+            <div>
+              <label for="score-fri-sun">금·일 동시 당직</label>
+              <input type="number" id="score-fri-sun" value="1" step="0.5" />
+            </div>
+
+            <div data-class-only="R1">
+              <label for="score-r1-weekly-over">R1 주당 3회 이상</label>
+              <input type="number" id="score-r1-weekly-over" value="10" step="0.5" />
+            </div>
+            <div data-class-only="R3">
+              <label for="score-r3-weekly-over">R3 주당 2회 이상</label>
+              <input type="number" id="score-r3-weekly-over" value="10" step="0.5" />
+            </div>
+            <div data-class-only="R2">
+              <label for="score-r2-weekly-under">R2 주당 0회</label>
+              <input type="number" id="score-r2-weekly-under" value="10" step="0.5" />
+            </div>
+          </div>
+        </div>
+      </details>
+    </div>
+
+    <!-- 이전/전전일 당직 -->
+    <div class="field field--full">
+      <label>연속성 설정 (시작일 이전 당직자)</label>
+      <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap:1rem;">
+        <div>
+          <div class="legend">전일 (D-1)</div>
+          <div style="display:flex; gap:0.5rem;">
+            <input id="prior-byung" type="text" placeholder="병당 이름" />
+            <input id="prior-eung" type="text" placeholder="응당 이름" />
+          </div>
+        </div>
+        <div>
+          <div class="legend">전전일 (D-2)</div>
+          <div style="display:flex; gap:0.5rem;">
+            <input id="prior2-byung" type="text" placeholder="병당 이름" />
+            <input id="prior2-eung" type="text" placeholder="응당 이름" />
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ICS 설정 -->
+    <div class="field">
+      <label for="ics-version">ICS 버전명</label>
+      <input id="ics-version" type="text" placeholder="v1" />
+    </div>
+    <div class="field">
+      <label>ICS 링크 미리보기</label>
+      <div id="ics-preview" class="legend"
+        style="padding:0.625rem; background:#f1f5f9; border-radius:var(--radius-md);">자동 계산됨</div>
+    </div>
+
+    <!-- 지난달 반영 -->
+    <div class="field field--full">
+      <label>지난달 통계 반영</label>
+      <div id="prev-stats-ui" style="overflow-x:auto;"></div>
+    </div>
+
+    <!-- Diagnostics -->
+    <div class="field field--full" style="display:flex; align-items:center; gap:0.5rem;">
+      <input type="checkbox" id="toggle-diagnostics" style="width:auto;" />
+      <label for="toggle-diagnostics" style="margin:0;">진단 모드 (Diagnostics)</label>
+    </div>
+
+    <!-- Actions -->
+    <div class="actions">
+      <button id="generate">당직표 생성</button>
+      <button id="export-xlsx" disabled>Excel 내보내기</button>
+      <button id="export-ics" disabled>ICS 내보내기</button>
+    </div>
+
+    <div id="messages" class="messages" aria-live="polite"></div>
+  </section>
+
+  <!-- 로딩 오버레이 -->
+  <div id="loading-overlay" class="loading-overlay" aria-hidden="true">
+    <div class="loading-box">
+      <div class="spinner" aria-hidden="true"></div>
+      <div class="loading-text" style="margin-top:1rem; font-weight:600;">당직표 생성 중…</div>
+    </div>
+  </div>
+
+  <section>
+    <div id="summary" class="summary"></div>
+    <div id="report" class="report"></div>
+    <div class="legend" style="margin-top:1rem; text-align:center;">
+      역할: 병당 1 · 응당 1 (매일). R3 소아턴은 수요일 당직 제외. R3 응급 태그 인원은 월간 응급 back.
+    </div>
+    <div id="roster" class="roster"></div>
+  </section>
+
+  <footer>
+    <small>PSY Duty Roster System &copy; 2025</small>
+  </footer>
+
+  <script type="module" src="src/app.js"></script>
+</body>
+
+</html>

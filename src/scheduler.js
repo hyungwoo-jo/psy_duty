@@ -54,6 +54,7 @@ function prepareContext(params) {
     prevStats = null,
     randomSeed = null,
     enforceDayoffBalance = true,
+    enforceWeeklyHourCap = true,
     weeklyHourCapMode = 'strict',
     enforceR3NonPediatricBalance = true,
     enforceDayoffWish = true,
@@ -220,6 +221,7 @@ function prepareContext(params) {
     enforceR3PediatricWedBan,
     enforceVacationExclusion,
     enforceUnavailableExclusion,
+    enforceWeeklyHourCap,
     weeklyHourCapMode,
     unavoidableWeekKeys,
     dayoffCountingMode,
@@ -401,6 +403,7 @@ function buildModel(ctx) {
     enforceR3PediatricWedBan,
     enforceVacationExclusion,
     enforceUnavailableExclusion,
+    enforceWeeklyHourCap,
     excludeR4Mode,
     customSlotOverrides,
   } = ctx;
@@ -447,26 +450,28 @@ function buildModel(ctx) {
   }
 
   // Total weekly hour constraints (duty + regular)
-  // The logic is: Total Hours <= cap
-  // Total Hours = Base Regular Hours + Extra Hours
-  // Base Regular Hours = (numWeekdaysInWeek - numVacationDays) * REGULAR_HOURS
-  // Extra Hours = (Sum of Duty Hours) - (Sum of Saved Regular Hours from Day-offs)
-  // So, we model `Extra Hours` on the LHS of the constraint.
-  // Extra Hours <= cap - Base Regular Hours
-  for (const person of employees) {
-    for (const wk of weekKeys) {
-      // Always use 80 hours cap to allow more flexibility for weekly duty distribution
-      let cap = 80;
+  if (enforceWeeklyHourCap) {
+    // The logic is: Total Hours <= cap
+    // Total Hours = Base Regular Hours + Extra Hours
+    // Base Regular Hours = (numWeekdaysInWeek - numVacationDays) * REGULAR_HOURS
+    // Extra Hours = (Sum of Duty Hours) - (Sum of Saved Regular Hours from Day-offs)
+    // So, we model `Extra Hours` on the LHS of the constraint.
+    // Extra Hours <= cap - Base Regular Hours
+    for (const person of employees) {
+      for (const wk of weekKeys) {
+        // Always use 80 hours cap to allow more flexibility for weekly duty distribution
+        let cap = 80;
 
-      const numWeekdays = weekdaysInWeek.get(wk) || 0;
-      const numVacationDays = vacationWeekdays.get(person.id)?.get(wk) || 0;
+        const numWeekdays = weekdaysInWeek.get(wk) || 0;
+        const numVacationDays = vacationWeekdays.get(person.id)?.get(wk) || 0;
 
-      const baseRegularHours = (numWeekdays - numVacationDays) * REGULAR_HOURS;
-      const rhs = cap - baseRegularHours;
+        const baseRegularHours = (numWeekdays - numVacationDays) * REGULAR_HOURS;
+        const rhs = cap - baseRegularHours;
 
-      const constraintName = `total_week_hours_${person.id}_${wk}`;
-      model.constraints[constraintName] = { max: rhs };
-      console.log(`[ILP MODEL] Constraint Added: Person=${person.name}, Week=${wk}, MaxExtraHours=${rhs.toFixed(1)} (Cap=${cap}, BaseRegular=${baseRegularHours.toFixed(1)})`);
+        const constraintName = `total_week_hours_${person.id}_${wk}`;
+        model.constraints[constraintName] = { max: rhs };
+        console.log(`[ILP MODEL] Constraint Added: Person=${person.name}, Week=${wk}, MaxExtraHours=${rhs.toFixed(1)} (Cap=${cap}, BaseRegular=${baseRegularHours.toFixed(1)})`);
+      }
     }
   }
 
@@ -508,7 +513,6 @@ function buildModel(ctx) {
     model.constraints[`r3_balance_byung_2`] = { max: 1 };
     model.constraints[`r3_balance_eung_1`] = { max: 1 };
     model.constraints[`r3_balance_eung_2`] = { max: 1 };
-    model.constraints[`r3_balance_dayoff_1`] = { max: 1 };
     model.constraints[`r3_balance_dayoff_2`] = { max: 1 };
   }
 
@@ -863,8 +867,11 @@ function rebuildLedger({ ctx, schedule }) {
   const people = employees.map((p) => ({
     ...p,
     weeklyHours: Object.fromEntries(weekKeys.map((wk) => [wk, 0])),
-    dutyCount: 0, weekdayDutyCount: 0, weekendDutyCount: 0,
-    _dutyHoursAccum: 0, _byung: 0, _eung: 0,
+    dutyCount: (p.carryover?.byung || 0) + (p.carryover?.eung || 0),
+    weekdayDutyCount: 0, weekendDutyCount: 0,
+    _dutyHoursAccum: 0,
+    _byung: p.carryover?.byung || 0,
+    _eung: p.carryover?.eung || 0,
     regularOffDayKeys: new Set(),
     lastDutyIndex: -999,
   }));
@@ -976,14 +983,7 @@ function requiredClassFor(date, holidaySet, slotIndex, excludeR4Mode = false, we
   }
   switch (dow) {
     case 1: return slotIndex === 0 ? 'R1' : 'R3';
-    case 2:
-      if (slotIndex === 0) return 'R1';
-      // Tuesday slot 1: R4 in normal mode, alternating R2/R3 in exclude mode
-      if (excludeR4Mode) {
-        // Week 0,2,4,... → R2, Week 1,3,5,... → R3
-        return (weekIndex % 2 === 0) ? 'R2' : 'R3';
-      }
-      return 'R4';
+    case 2: return slotIndex === 0 ? 'R1' : 'R4';  // 항상 R4 (달력에서 수동 변경 가능)
     case 3: return slotIndex === 0 ? 'R3' : 'R2';
     case 4: return slotIndex === 0 ? 'R1' : 'R2';
     case 5: return slotIndex === 0 ? 'R1' : 'R3';
