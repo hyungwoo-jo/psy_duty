@@ -114,19 +114,52 @@ let _scoreConfigs = null;
 let lastResult = null;
 let scheduleSeedCounter = 0;
 
-// Web Worker Initialization
-const worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
+const MAX_WORKERS = Math.max(1, Math.floor(navigator.hardwareConcurrency / 2) || 2);
+let workerPool = [];
+let taskQueue = [];
+
+function getWorker() {
+  if (workerPool.length > 0) {
+    return Promise.resolve(workerPool.pop());
+  }
+  if (document.querySelectorAll('#worker-instance').length < MAX_WORKERS) {
+    const worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
+    worker.id = `worker-${Math.random()}`;
+    const workerInstance = document.createElement('div');
+    workerInstance.id = worker.id;
+    workerInstance.className = 'worker-instance';
+    document.body.appendChild(workerInstance);
+    return Promise.resolve(worker);
+  }
+  return new Promise(resolve => {
+    const interval = setInterval(() => {
+      if (workerPool.length > 0) {
+        clearInterval(interval);
+        resolve(workerPool.pop());
+      }
+    }, 50);
+  });
+}
+
+function returnWorker(worker) {
+  const workerInstance = document.getElementById(worker.id);
+  if (workerInstance) {
+    workerInstance.remove();
+  }
+  worker.terminate();
+}
 
 function runScheduleInWorker(args) {
-  return new Promise((resolve, reject) => {
+  return new Promise(async (resolve, reject) => {
+    const worker = await getWorker();
     const id = Date.now() + Math.random();
     const handler = (e) => {
       if (e.data.id === id) {
         worker.removeEventListener('message', handler);
+        returnWorker(worker);
         if (e.data.type === 'SUCCESS') {
           resolve(e.data.payload);
         } else {
-          // Reconstruct Error object from payload
           const err = new Error(e.data.payload.message);
           if (e.data.payload.stack) err.stack = e.data.payload.stack;
           reject(err);
