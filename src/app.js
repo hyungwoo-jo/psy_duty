@@ -114,45 +114,63 @@ let _scoreConfigs = null;
 let lastResult = null;
 let scheduleSeedCounter = 0;
 
-const MAX_WORKERS = Math.max(1, Math.floor(navigator.hardwareConcurrency / 2) || 2);
-let workerPool = [];
-let taskQueue = [];
+// Use n-2 workers to leave CPU resources for the browser and other tasks
+// For 2 cores: use 1, for 3 cores: use 2, for 4+ cores: use n-2
+const calculateMaxWorkers = () => {
+  const cores = navigator.hardwareConcurrency || 4;
+  if (cores <= 2) return 1;
+  if (cores === 3) return 2;
+  return cores - 2;
+};
+const MAX_WORKERS = calculateMaxWorkers();
+console.log(`[WorkerPool] Detected ${navigator.hardwareConcurrency || 'unknown'} cores, using ${MAX_WORKERS} workers.`);
+
+// Pre-initialize worker pool
+const workerPool = [];
+const activeWorkers = new Set();
+const taskQueue = [];
+
+// Create workers upfront
+for (let i = 1; i <= MAX_WORKERS; i++) {
+  const worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
+  worker.id = i;
+  worker.onerror = (error) => console.error(`[WorkerPool] Worker #${worker.id} error:`, error);
+  worker.onmessageerror = (error) => console.error(`[WorkerPool] Worker #${worker.id} message error:`, error);
+  workerPool.push(worker);
+  console.log(`[WorkerPool] Pre-initialized worker #${worker.id}`);
+}
 
 function getWorker() {
+  // If a worker is idle, return it
   if (workerPool.length > 0) {
-    return Promise.resolve(workerPool.pop());
-  }
-  if (document.querySelectorAll('#worker-instance').length < MAX_WORKERS) {
-    const worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
-    worker.id = `worker-${Math.random()}`;
-    const workerInstance = document.createElement('div');
-    workerInstance.id = worker.id;
-    workerInstance.className = 'worker-instance';
-    document.body.appendChild(workerInstance);
+    const worker = workerPool.pop();
+    activeWorkers.add(worker);
     return Promise.resolve(worker);
   }
+  // Otherwise, queue the task
   return new Promise(resolve => {
-    const interval = setInterval(() => {
-      if (workerPool.length > 0) {
-        clearInterval(interval);
-        resolve(workerPool.pop());
-      }
-    }, 50);
+    taskQueue.push(resolve);
   });
 }
 
 function returnWorker(worker) {
-  const workerInstance = document.getElementById(worker.id);
-  if (workerInstance) {
-    workerInstance.remove();
+  activeWorkers.delete(worker);
+  // If there are tasks waiting, give this worker to the next task
+  if (taskQueue.length > 0) {
+    const nextTaskResolve = taskQueue.shift();
+    activeWorkers.add(worker);
+    nextTaskResolve(worker);
+  } else {
+    // Return to pool
+    workerPool.push(worker);
   }
-  worker.terminate();
 }
 
 function runScheduleInWorker(args) {
   return new Promise(async (resolve, reject) => {
     const worker = await getWorker();
     const id = Date.now() + Math.random();
+
     const handler = (e) => {
       if (e.data.id === id) {
         worker.removeEventListener('message', handler);
@@ -166,8 +184,32 @@ function runScheduleInWorker(args) {
         }
       }
     };
+
     worker.addEventListener('message', handler);
     worker.postMessage({ type: 'GENERATE_SCHEDULE', payload: args, id });
+  });
+}
+
+function runScheduleInWorkerWithTimeout(args, timeoutMs = 20000) { // 20 second timeout
+  return new Promise((resolve, reject) => {
+    let timeoutHandle;
+    const workerPromise = runScheduleInWorker(args);
+
+    const timeoutPromise = new Promise((_, internalReject) => {
+      timeoutHandle = setTimeout(() => {
+        internalReject(new Error(`Worker task timed out after ${timeoutMs}ms for seed ${args.randomSeed}`));
+      }, timeoutMs);
+    });
+
+    Promise.race([workerPromise, timeoutPromise])
+      .then(result => {
+        clearTimeout(timeoutHandle);
+        resolve(result);
+      })
+      .catch(error => {
+        clearTimeout(timeoutHandle);
+        reject(error);
+      });
   });
 }
 
@@ -233,6 +275,18 @@ function bindScoreClassTabs() {
   ensureScoreConfigs();
   const indicator = document.getElementById('score-class-indicator');
   if (indicator) indicator.textContent = `현재: ${_scoreClass}`;
+
+  // Toggle class-specific fields visibility
+  const toggleClassFields = (klass) => {
+    document.querySelectorAll('[data-class-only]').forEach(el => {
+      const target = el.getAttribute('data-class-only');
+      el.style.display = target === klass ? '' : 'none';
+    });
+  };
+
+  // Initial state
+  toggleClassFields(_scoreClass);
+
   tabs.addEventListener('click', (e) => {
     const btn = e.target?.closest('button[data-klass]');
     if (!btn) return;
@@ -250,6 +304,8 @@ function bindScoreClassTabs() {
     // load inputs
     setCurrentScoreInputs(_scoreConfigs[_scoreClass]);
     if (indicator) indicator.textContent = `현재: ${_scoreClass}`;
+    // toggle class-specific fields
+    toggleClassFields(_scoreClass);
   });
 }
 
@@ -424,7 +480,6 @@ async function onGenerate() {
 
       const runSchedule = (mode, seed, r3Cap = false, r1Cap = false, hourCap = 'strict') => {
         const randomSeed = Number.isFinite(seed) ? seed : nextRandomSeed();
-        console.log(`[SCHEDULER] Using random seed: ${randomSeed}`);
         const args = {
           startDate,
           endDate,
@@ -455,7 +510,7 @@ async function onGenerate() {
           excludeR4Mode: excludeR4Toggle?.checked ?? false,
           customSlotOverrides,
         };
-        return runScheduleInWorker(args);
+        return runScheduleInWorkerWithTimeout(args, 60000); // 60 second timeout per attempt
       };
 
       // --- Multi-run and evaluation logic ---
@@ -481,39 +536,54 @@ async function onGenerate() {
         }
       };
 
-      const runAttempt = async (attemptNum) => {
-        if (attemptNum > MAX_ATTEMPTS) {
-          evaluateAndRender(results);
-          return;
+      const runSingleAttempt = async (attemptNum) => {
+        const modes = roleHardcapMode === 'strict' ? ['strict', 'relaxed'] : [roleHardcapMode];
+        let currentResult = null;
+        let usedMode = roleHardcapMode;
+        let lastError = null;
+
+        for (const mode of modes) {
+          try {
+            currentResult = await attemptWithConstraints(mode);
+            usedMode = mode;
+            break;
+          } catch (error) {
+            lastError = error;
+          }
         }
 
+        if (!currentResult) throw lastError;
+
+        if (usedMode === 'relaxed' && roleHardcapMode !== 'relaxed') {
+          setRoleHardcapMode('relaxed');
+          if (!autoRelaxMessageShown) {
+            appendMessage('기본 모드(±1)로는 스케줄 생성에 실패하여 자동으로 완화 모드(±2)로 전환했습니다.');
+            autoRelaxMessageShown = true;
+          }
+        }
+
+        return currentResult;
+      };
+
+      const runAllAttempts = async () => {
         try {
-          const modes = roleHardcapMode === 'strict' ? ['strict', 'relaxed'] : [roleHardcapMode];
-          let currentResult = null;
-          let usedMode = roleHardcapMode;
-          let lastError = null;
-
-          for (const mode of modes) {
-            try {
-              currentResult = await attemptWithConstraints(mode);
-              usedMode = mode;
-              break;
-            } catch (error) {
-              lastError = error;
-            }
+          // Run all attempts in parallel using the worker pool
+          const attemptPromises = [];
+          for (let i = 1; i <= MAX_ATTEMPTS; i++) {
+            attemptPromises.push(
+              runSingleAttempt(i).catch(err => {
+                console.warn(`Attempt ${i} failed:`, err.message);
+                return null; // Return null for failed attempts instead of stopping everything
+              })
+            );
           }
 
-          if (!currentResult) throw lastError;
+          const allResults = await Promise.all(attemptPromises);
+          // Filter out null results (failed attempts)
+          const successfulResults = allResults.filter(r => r !== null);
 
-          if (usedMode === 'relaxed' && roleHardcapMode !== 'relaxed') {
-            setRoleHardcapMode('relaxed');
-            if (!autoRelaxMessageShown) {
-              appendMessage('기본 모드(±1)로는 스케줄 생성에 실패하여 자동으로 완화 모드(±2)로 전환했습니다.');
-              autoRelaxMessageShown = true;
-            }
-          }
-
-          results.push(currentResult);
+          results.push(...successfulResults);
+          evaluateAndRender(results);
         } catch (err) {
           const detailedError = `오류 발생: ${err.message}\n\nStack Trace:\n${err.stack}`;
           console.error(err);
@@ -521,10 +591,7 @@ async function onGenerate() {
           appendMessage(detailedError.replace(/\n/g, '<br>'));
           setLoading(false);
           disableActions(false);
-          return; // Stop the loop on first error
         }
-
-        setTimeout(() => runAttempt(attemptNum + 1), 50);
       };
 
       const evaluateAndRender = (finalResults) => {
@@ -793,6 +860,7 @@ async function onGenerate() {
               if (klass === 'R1' && count >= 3) {
                 const penalty = conf.r1WeeklyOver ?? weights.global.r1WeeklyOver ?? 0;
                 const add = penalty * (count - 2); // 3회부터 페널티
+                console.warn(`[WEEKLY DUTY] ${person.name} (R1): ${week} 주에 ${count}회 당직 → 페널티 ${add}점 (penalty=${penalty})`);
                 score += add;
                 if (perClassScore) perClassScore.set(klass, (perClassScore.get(klass) || 0) + add);
               }
@@ -801,6 +869,7 @@ async function onGenerate() {
               if (klass === 'R3' && count >= 2) {
                 const penalty = conf.r3WeeklyOver ?? weights.global.r3WeeklyOver ?? 0;
                 const add = penalty * (count - 1); // 2회부터 페널티
+                console.warn(`[WEEKLY DUTY] ${person.name} (R3): ${week} 주에 ${count}회 당직 → 페널티 ${add}점 (penalty=${penalty})`);
                 score += add;
                 if (perClassScore) perClassScore.set(klass, (perClassScore.get(klass) || 0) + add);
               }
@@ -808,6 +877,7 @@ async function onGenerate() {
               // R2: 0회 페널티
               if (klass === 'R2' && count === 0) {
                 const penalty = conf.r2WeeklyUnder ?? weights.global.r2WeeklyUnder ?? 0;
+                console.warn(`[WEEKLY DUTY] ${person.name} (R2): ${week} 주에 0회 당직 → 페널티 ${penalty}점`);
                 score += penalty;
                 if (perClassScore) perClassScore.set(klass, (perClassScore.get(klass) || 0) + penalty);
               }
@@ -815,6 +885,32 @@ async function onGenerate() {
           }
 
           return score;
+        }
+
+        function checkWeeklyDutyViolation(result) {
+          if (!result || !result.stats) return false;
+          const empById = new Map(result.employees.map((e) => [e.id, e]));
+
+          for (const person of result.stats) {
+            const klass = empById.get(person.id)?.klass || '';
+            const weeklyDuties = person.weeklyDuties || {};
+
+            for (const week of Object.keys(weeklyDuties)) {
+              const count = Number(weeklyDuties[week]) || 0;
+
+              // R1: 3회 이상이면 위반
+              if (klass === 'R1' && count >= 3) {
+                return true;
+              }
+
+              // R3: 2회 이상이면 위반
+              if (klass === 'R3' && count >= 2) {
+                return true;
+              }
+            }
+          }
+
+          return false;
         }
 
         function stitchSchedulesByClass({ classes, bestByClass, base }) {
@@ -864,15 +960,23 @@ async function onGenerate() {
 
             // Re-score merged result
             const perClassScore = new Map();
-            const totalScore = calculateHourScore(result, perClassScore)
-              + calculateCarryoverScore(result, perClassScore)
-              + calculateGapPenalty(result, perClassScore)
-              + calculateFriSunPenalty(result, perClassScore)
-              + calculateWeeklyDutyPenalty(result, perClassScore);
+            const hourScore = calculateHourScore(result, perClassScore);
+            const carryoverScore = calculateCarryoverScore(result, perClassScore);
+            const gapScore = calculateGapPenalty(result, perClassScore);
+            const friSunScore = calculateFriSunPenalty(result, perClassScore);
+            const weeklyDutyScore = calculateWeeklyDutyPenalty(result, perClassScore);
+            const totalScore = hourScore + carryoverScore + gapScore + friSunScore + weeklyDutyScore;
+
+            // Always return the merged schedule - let the caller decide based on score
+            const hasWeeklyDutyViolation = checkWeeklyDutyViolation(result);
+            const note = hasWeeklyDutyViolation
+              ? '연차별 최저점 조합 스케줄 적용 (주당 당직 제약 위반 있음)'
+              : '연차별 최저점 조합 스케줄 적용';
+
             return {
               passed: true,
               candidate: { result, totalScore, perClassScore },
-              note: '연차별 최저점 조합 스케줄 적용',
+              note,
             };
           } catch (e) {
             console.warn('[stitchSchedulesByClass] fail:', e);
@@ -981,6 +1085,9 @@ async function onGenerate() {
         }
 
         const scoredResults = finalResults.map((res) => {
+          // Recompute stats to ensure weeklyDuties is calculated
+          recomputeStatsInPlace(res);
+
           const perClassScore = new Map();
           const hourScore = calculateHourScore(res, perClassScore);
           const carryoverScore = calculateCarryoverScore(res, perClassScore);
@@ -1002,17 +1109,34 @@ async function onGenerate() {
         const bestByClass = new Map();
         for (const k of classes) {
           let best = null;
+          let bestScore = Infinity;
           for (const cand of scoredResults) {
             const v = cand.perClassScore.get(k) ?? 0;
-            if (!best || v < (best.perClassScore.get(k) ?? 0)) best = cand;
+            if (v < bestScore) {
+              bestScore = v;
+              best = cand;
+            }
           }
           if (best) bestByClass.set(k, best);
         }
 
         // Stitch schedules by class from the per-class minima
         const merged = stitchSchedulesByClass({ classes, bestByClass, base: baseline });
-        const winner = merged?.passed ? merged.candidate : baseline;
-        if (merged?.note) appendMessage(merged.note, 'warn');
+
+        // Choose the schedule with lower total score
+        let winner = baseline;
+        let note = '전체 최저점 스케줄 사용';
+
+        if (merged?.passed && merged.candidate) {
+          if (merged.candidate.totalScore < baseline.totalScore) {
+            winner = merged.candidate;
+            note = merged.note;
+          } else {
+            note = `전체 최저점 스케줄 사용 (조합 스케줄 점수: ${merged.candidate.totalScore}, 기본 스케줄 점수: ${baseline.totalScore})`;
+          }
+        }
+
+        appendMessage(note, 'warn');
 
         // Render
         lastResult = winner.result;
@@ -1029,7 +1153,7 @@ async function onGenerate() {
         disableActions(false);
       };
 
-      runAttempt(1);
+      runAllAttempts();
 
     } catch (err) {
       console.error(err);

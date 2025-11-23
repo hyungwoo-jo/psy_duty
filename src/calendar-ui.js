@@ -69,7 +69,7 @@ export function renderCalendar(startInput, endInput, weeksInput, holidaysInput, 
   // Info text
   const infoDiv = document.createElement('div');
   infoDiv.className = 'calendar-info';
-  infoDiv.textContent = '※ 각 날짜에서 연차 슬롯을 선택하거나 특정 인원을 강제 배정할 수 있습니다. 금지 인원은 쉼표로 구분하여 입력하세요 (예: 윤성민, 이수연)';
+  infoDiv.textContent = '※ 연차 슬롯 선택 / 강제 배정 / 금지 인원 입력 가능. Day-off 희망일은 전날 강제 배정으로 처리. 금지 인원은 쉼표로 구분 (예: 윤성민, 이수연)';
   calGrid.appendChild(infoDiv);
 
   // Header row

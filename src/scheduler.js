@@ -455,12 +455,8 @@ function buildModel(ctx) {
   // Extra Hours <= cap - Base Regular Hours
   for (const person of employees) {
     for (const wk of weekKeys) {
-      let cap;
-      if (weeklyHourCapMode === 'strict') {
-        cap = vacationKlasses.has(person.klass) ? 80 : 72;
-      } else {
-        cap = 80;
-      }
+      // Always use 80 hours cap to allow more flexibility for weekly duty distribution
+      let cap = 80;
 
       const numWeekdays = weekdaysInWeek.get(wk) || 0;
       const numVacationDays = vacationWeekdays.get(person.id)?.get(wk) || 0;
@@ -593,7 +589,8 @@ function buildModel(ctx) {
           [slotConstraint]: 1,
           [personDayConstraint(person.id, dayIdx)]: 1,
           // Add a small random penalty to break ties between equally optimal solutions
-          penalty: (random() * 0.001),
+          // Increased to 0.2 for much better solution diversity
+          penalty: (random() * 0.2),
         };
         /*
         // Add to total week hours constraint.

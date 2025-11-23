@@ -87,7 +87,7 @@ R4 이동인"></textarea>
         });
       </script>
 
-      <div class="field field--full">
+      <div class="field field--full" style="display:none;">
         <details>
           <summary>부가 입력 (불가일/희망일/휴가)</summary>
           <div style="margin-top:12px;">
@@ -116,7 +116,7 @@ R4 이동인"></textarea>
           <summary>Ruleset</summary>
           <fieldset>
             <div class="checkbox-group">
-              <div class="legend">※ R1/R2/R3 주간 당직 제약은 Scoring 섹션에서 페널티로 조정할 수 있습니다.</div>
+              <div class="legend">※ 주간 근무시간 상한은 80시간으로 설정되어 있습니다. R1/R2/R3 주간 당직 제약은 Scoring 섹션의 각 연차 탭에서 페널티로 조정할 수 있습니다.</div>
               <div>
                 <input type="checkbox" id="toggle-r3-balance" checked />
                 <label for="toggle-r3-balance">비소아 R3 듀오 균형</label>
@@ -195,12 +195,12 @@ R4 이동인"></textarea>
               <small>전날 한 번 쉬고 다시 당직에 투입되는 패턴을 줄이고 싶을 때 사용합니다.</small>
               <div><label for="score-fri-sun" title="같은 주 금요일과 일요일 당직을 동일 인원이 맡은 경우 부과되는 점수입니다.">금·일 동시 당직 페널티</label><input type="number" id="score-fri-sun" value="1" step="0.5" /></div>
               <small>같은 주 금요일과 일요일을 모두 맡은 인원에게 추가 부담을 줄이고 싶을 때 사용합니다.</small>
-              <div><label for="score-r1-weekly-over" title="R1이 한 주에 3회 이상 당직을 서게 될 때 부과되는 점수입니다.">R1 주당 3회 이상 페널티</label><input type="number" id="score-r1-weekly-over" value="10" step="0.5" /></div>
-              <small>R1 주당 당직 제약이 꺼져있을 때, 한 주에 3회 이상 당직 시 페널티를 부과합니다.</small>
-              <div><label for="score-r3-weekly-over" title="R3이 한 주에 2회 이상 당직을 서게 될 때 부과되는 점수입니다.">R3 주당 2회 이상 페널티</label><input type="number" id="score-r3-weekly-over" value="10" step="0.5" /></div>
-              <small>R3 주당 당직 제약이 꺼져있을 때, 한 주에 2회 이상 당직 시 페널티를 부과합니다.</small>
-              <div><label for="score-r2-weekly-under" title="R2가 한 주에 당직이 없을 때 부과되는 점수입니다.">R2 주당 0회 페널티</label><input type="number" id="score-r2-weekly-under" value="10" step="0.5" /></div>
-              <small>R2 주당 최소 제약이 꺼져있을 때, 한 주에 당직이 없으면 페널티를 부과합니다.</small>
+              <div data-class-only="R1"><label for="score-r1-weekly-over" title="R1이 한 주에 3회 이상 당직을 서게 될 때 부과되는 점수입니다.">R1 주당 3회 이상 페널티</label><input type="number" id="score-r1-weekly-over" value="10" step="0.5" /></div>
+              <small data-class-only="R1">R1 연차에서 한 주에 3회 이상 당직 시 페널티를 부과합니다.</small>
+              <div data-class-only="R3"><label for="score-r3-weekly-over" title="R3이 한 주에 2회 이상 당직을 서게 될 때 부과되는 점수입니다.">R3 주당 2회 이상 페널티</label><input type="number" id="score-r3-weekly-over" value="10" step="0.5" /></div>
+              <small data-class-only="R3">R3 연차에서 한 주에 2회 이상 당직 시 페널티를 부과합니다.</small>
+              <div data-class-only="R2"><label for="score-r2-weekly-under" title="R2가 한 주에 당직이 없을 때 부과되는 점수입니다.">R2 주당 0회 페널티</label><input type="number" id="score-r2-weekly-under" value="10" step="0.5" /></div>
+              <small data-class-only="R2">R2 연차에서 한 주에 당직이 없으면 페널티를 부과합니다.</small>
 
             </div>
           </fieldset>
