@@ -1,4 +1,4 @@
-import { fmtDate, addDays, weekKey } from './time.js';
+import { fmtDate, addDays } from './time.js';
 
 export const SCORE_DEFAULTS = {
     overtimeSoft: 5,
@@ -14,6 +14,7 @@ export const SCORE_DEFAULTS = {
     r3WeeklyOver: 10,
     r2WeeklyUnder: 10,
     friSunPenalty: 0,
+    sunTuePenalty: 0,
 };
 
 export const SCORE_CLASSES = ['R1', 'R2', 'R3', 'R4'];
@@ -223,44 +224,53 @@ export function calculateGapPenalty(result, perClassScore, weights) {
     return score;
 }
 
-export function computeFriSunComboCounts(result) {
+function computeDayPairComboCounts(result, { startDow, endDow, offsetDays, metaKey }) {
     const counts = new Map();
     if (!result) return counts;
     const schedule = result.schedule || [];
-    const weekly = new Map(); // weekKey -> { fri:Set, sun:Set }
+    const dutiesByDate = new Map();
+    for (const cell of schedule) {
+        if (!cell?.date || !cell?.duties?.length) continue;
+        dutiesByDate.set(fmtDate(new Date(cell.date)), cell.duties);
+    }
     for (const cell of schedule) {
         if (!cell?.duties?.length) continue;
         const date = new Date(cell.date);
-        const day = date.getDay();
-        if (day !== 5 && day !== 0) continue; // 5: Fri, 0: Sun
-        const wk = weekKey(date);
-        if (!weekly.has(wk)) {
-            weekly.set(wk, { fri: new Set(), sun: new Set() });
-        }
-        const bucket = weekly.get(wk);
-        const targetSet = day === 5 ? bucket.fri : bucket.sun;
+        if (date.getDay() !== startDow) continue;
+        const targetDate = addDays(date, offsetDays);
+        if (targetDate.getDay() !== endDow) continue;
+        const sourceSet = new Set();
         for (const duty of cell.duties) {
             if (duty?.id == null) continue;
-            targetSet.add(duty.id);
+            sourceSet.add(duty.id);
+        }
+        if (!sourceSet.size) continue;
+        const targetDuties = dutiesByDate.get(fmtDate(targetDate)) || [];
+        for (const duty of targetDuties) {
+            if (duty?.id == null) continue;
+            if (!sourceSet.has(duty.id)) continue;
+            counts.set(duty.id, (counts.get(duty.id) || 0) + 1);
         }
     }
-    for (const bucket of weekly.values()) {
-        if (!bucket.fri.size || !bucket.sun.size) continue;
-        for (const id of bucket.fri) {
-            if (bucket.sun.has(id)) {
-                counts.set(id, (counts.get(id) || 0) + 1);
-            }
-        }
+    if (!result.meta) result.meta = {};
+    if (metaKey) {
+        result.meta[metaKey] = Object.fromEntries([...counts.entries()].map(([k, v]) => [String(k), Number(v) || 0]));
     }
     return counts;
 }
 
+export function computeFriSunComboCounts(result) {
+    return computeDayPairComboCounts(result, {
+        startDow: 5,
+        endDow: 0,
+        offsetDays: 2,
+        metaKey: 'friSunComboCounts',
+    });
+}
+
 export function getFriSunCounts(result) {
     if (!result) return new Map();
-    const counts = computeFriSunComboCounts(result);
-    if (!result.meta) result.meta = {};
-    result.meta.friSunComboCounts = Object.fromEntries([...counts.entries()].map(([k, v]) => [String(k), Number(v) || 0]));
-    return counts;
+    return computeFriSunComboCounts(result);
 }
 
 export function calculateFriSunPenalty(result, perClassScore, weights) {
@@ -272,6 +282,37 @@ export function calculateFriSunPenalty(result, perClassScore, weights) {
         const klass = empById.get(id)?.klass || '기타';
         const conf = (weights.perClass?.[klass]) || {};
         const penalty = conf.friSunPenalty ?? weights.global.friSunPenalty ?? 0;
+        if (!penalty || !count) continue;
+        const add = penalty * count;
+        score += add;
+        if (perClassScore) perClassScore.set(klass, (perClassScore.get(klass) || 0) + add);
+    }
+    return score;
+}
+
+export function computeSunTueComboCounts(result) {
+    return computeDayPairComboCounts(result, {
+        startDow: 0,
+        endDow: 2,
+        offsetDays: 2,
+        metaKey: 'sunTueComboCounts',
+    });
+}
+
+export function getSunTueCounts(result) {
+    if (!result) return new Map();
+    return computeSunTueComboCounts(result);
+}
+
+export function calculateSunTuePenalty(result, perClassScore, weights) {
+    const counts = getSunTueCounts(result);
+    if (!counts.size) return 0;
+    let score = 0;
+    const empById = new Map(result.employees.map((e) => [e.id, e]));
+    for (const [id, count] of counts.entries()) {
+        const klass = empById.get(id)?.klass || '기타';
+        const conf = (weights.perClass?.[klass]) || {};
+        const penalty = conf.sunTuePenalty ?? weights.global.sunTuePenalty ?? 0;
         if (!penalty || !count) continue;
         const add = penalty * count;
         score += add;
@@ -401,14 +442,16 @@ export function stitchSchedulesByClass({ classes, bestByClass, base, weights, pr
         const hourPerClass = new Map();
         const gapPerClass = new Map();
         const friSunPerClass = new Map();
+        const sunTuePerClass = new Map();
         const weeklyPerClass = new Map();
 
         const hourScore = calculateHourScore(result, hourPerClass, weights);
         const carryoverScore = prevStats ? calculateCarryoverScore(result, carryoverPerClass, weights, prevStats) : 0;
         const gapScore = calculateGapPenalty(result, gapPerClass, weights);
         const friSunScore = calculateFriSunPenalty(result, friSunPerClass, weights);
+        const sunTueScore = calculateSunTuePenalty(result, sunTuePerClass, weights);
         const weeklyDutyScore = calculateWeeklyDutyPenalty(result, weeklyPerClass, weights);
-        const totalScore = hourScore + carryoverScore + gapScore + friSunScore + weeklyDutyScore;
+        const totalScore = hourScore + carryoverScore + gapScore + friSunScore + sunTueScore + weeklyDutyScore;
 
         // Combine into total perClassScore
         for (const klass of ['R1', 'R2', 'R3', 'R4']) {
@@ -416,13 +459,14 @@ export function stitchSchedulesByClass({ classes, bestByClass, base, weights, pr
                 (carryoverPerClass.get(klass) || 0) +
                 (gapPerClass.get(klass) || 0) +
                 (friSunPerClass.get(klass) || 0) +
+                (sunTuePerClass.get(klass) || 0) +
                 (weeklyPerClass.get(klass) || 0);
             if (total > 0) perClassScore.set(klass, total);
         }
 
         const breakdown = {
-            hourScore, carryoverScore, gapScore, friSunScore, weeklyDutyScore,
-            hourPerClass, carryoverPerClass, gapPerClass, friSunPerClass, weeklyPerClass,
+            hourScore, carryoverScore, gapScore, friSunScore, sunTueScore, weeklyDutyScore,
+            hourPerClass, carryoverPerClass, gapPerClass, friSunPerClass, sunTuePerClass, weeklyPerClass,
             result,
             prevStats,
             weights

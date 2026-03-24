@@ -13,6 +13,7 @@ export function renderScoreBreakdownDetailed(candidate, report) {
     const empById = new Map(result.employees.map((e) => [e.id, e]));
     const gapCounts = result.meta?.gapCounts || {};
     const friSunCounts = result.meta?.friSunComboCounts || {};
+    const sunTueCounts = result.meta?.sunTueComboCounts || {};
 
     const wrap = document.createElement('details');
     wrap.open = false;
@@ -65,6 +66,11 @@ export function renderScoreBreakdownDetailed(candidate, report) {
         const friSunScore = bd.friSunPerClass?.get(klass) || 0;
         if (friSunScore > 0) {
             renderFriSunDetails(list, klass, peopleInClass, friSunCounts, weights);
+        }
+
+        const sunTueScore = bd.sunTuePerClass?.get(klass) || 0;
+        if (sunTueScore > 0) {
+            renderSunTueDetails(list, klass, peopleInClass, sunTueCounts, weights);
         }
 
         // 5. Weekly duty penalties
@@ -213,6 +219,26 @@ function renderFriSunDetails(list, klass, peopleInClass, friSunCounts, weights) 
         const li = document.createElement('li');
         li.style.marginBottom = '0.5rem';
         li.innerHTML = `<strong>금·일 동시 당직:</strong> ${items.join(', ')}`;
+        list.appendChild(li);
+    }
+}
+
+function renderSunTueDetails(list, klass, peopleInClass, sunTueCounts, weights) {
+    const wClass = (weights.perClass?.[klass]) || {};
+    const penalty = wClass.sunTuePenalty ?? weights.global?.sunTuePenalty ?? 1;
+
+    const items = [];
+    for (const person of peopleInClass) {
+        const count = Number(sunTueCounts[person.id]) || 0;
+        if (count > 0) {
+            items.push(`${person.name} ${count}회 (${(penalty * count).toFixed(1)}점)`);
+        }
+    }
+
+    if (items.length > 0) {
+        const li = document.createElement('li');
+        li.style.marginBottom = '0.5rem';
+        li.innerHTML = `<strong>일·화 동시 당직:</strong> ${items.join(', ')}`;
         list.appendChild(li);
     }
 }

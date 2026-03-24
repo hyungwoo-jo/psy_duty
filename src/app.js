@@ -17,6 +17,7 @@ import {
   calculateCarryoverScore,
   calculateGapPenalty,
   calculateFriSunPenalty,
+  calculateSunTuePenalty,
   calculateWeeklyDutyPenalty,
   checkWeeklyDutyViolation,
   stitchSchedulesByClass,
@@ -218,14 +219,16 @@ async function onGenerate() {
           const hourPerClass = new Map();
           const gapPerClass = new Map();
           const friSunPerClass = new Map();
+          const sunTuePerClass = new Map();
           const weeklyPerClass = new Map();
 
           const hourScore = calculateHourScore(res, hourPerClass, weights);
           const carryoverScore = calculateCarryoverScore(res, carryoverPerClass, weights, params.prevStats);
           const gapScore = calculateGapPenalty(res, gapPerClass, weights);
           const friSunScore = calculateFriSunPenalty(res, friSunPerClass, weights);
+          const sunTueScore = calculateSunTuePenalty(res, sunTuePerClass, weights);
           const weeklyDutyScore = calculateWeeklyDutyPenalty(res, weeklyPerClass, weights);
-          const totalScore = hourScore + carryoverScore + gapScore + friSunScore + weeklyDutyScore;
+          const totalScore = hourScore + carryoverScore + gapScore + friSunScore + sunTueScore + weeklyDutyScore;
 
           // Combine into total perClassScore
           for (const klass of ['R1', 'R2', 'R3', 'R4']) {
@@ -233,13 +236,14 @@ async function onGenerate() {
               (carryoverPerClass.get(klass) || 0) +
               (gapPerClass.get(klass) || 0) +
               (friSunPerClass.get(klass) || 0) +
+              (sunTuePerClass.get(klass) || 0) +
               (weeklyPerClass.get(klass) || 0);
             if (total > 0) perClassScore.set(klass, total);
           }
 
           const breakdown = {
-            hourScore, carryoverScore, gapScore, friSunScore, weeklyDutyScore,
-            hourPerClass, carryoverPerClass, gapPerClass, friSunPerClass, weeklyPerClass,
+            hourScore, carryoverScore, gapScore, friSunScore, sunTueScore, weeklyDutyScore,
+            hourPerClass, carryoverPerClass, gapPerClass, friSunPerClass, sunTuePerClass, weeklyPerClass,
             result: res,
             prevStats: params.prevStats,
             weights

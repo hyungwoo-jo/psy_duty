@@ -63,6 +63,7 @@ const scoreRoleIncrement = document.querySelector('#score-role-increment');
 const scoreRoleSpread = document.querySelector('#score-role-spread');
 const scoreGapPenalty = document.querySelector('#score-gap2');
 const scoreFriSunPenalty = document.querySelector('#score-fri-sun');
+const scoreSunTuePenalty = document.querySelector('#score-sun-tue');
 const scoreR1WeeklyOver = document.querySelector('#score-r1-weekly-over');
 const scoreR3WeeklyOver = document.querySelector('#score-r3-weekly-over');
 const scoreR2WeeklyUnder = document.querySelector('#score-r2-weekly-under');
@@ -546,6 +547,7 @@ function getCurrentScoreInputs() {
         roleSpread: readScoreInput(scoreRoleSpread, SCORE_DEFAULTS.roleSpread),
         gapPenalty: readScoreInput(scoreGapPenalty, SCORE_DEFAULTS.gapPenalty),
         friSunPenalty: readScoreInput(scoreFriSunPenalty, SCORE_DEFAULTS.friSunPenalty),
+        sunTuePenalty: readScoreInput(scoreSunTuePenalty, SCORE_DEFAULTS.sunTuePenalty),
         r1WeeklyOver: readScoreInput(scoreR1WeeklyOver, SCORE_DEFAULTS.r1WeeklyOver),
         r3WeeklyOver: readScoreInput(scoreR3WeeklyOver, SCORE_DEFAULTS.r3WeeklyOver),
         r2WeeklyUnder: readScoreInput(scoreR2WeeklyUnder, SCORE_DEFAULTS.r2WeeklyUnder),
@@ -564,6 +566,7 @@ function setCurrentScoreInputs(cfg) {
     if (scoreRoleSpread) scoreRoleSpread.value = cfg.roleSpread;
     if (scoreGapPenalty) scoreGapPenalty.value = cfg.gapPenalty;
     if (scoreFriSunPenalty) scoreFriSunPenalty.value = cfg.friSunPenalty;
+    if (scoreSunTuePenalty) scoreSunTuePenalty.value = cfg.sunTuePenalty ?? SCORE_DEFAULTS.sunTuePenalty;
     if (scoreR1WeeklyOver) scoreR1WeeklyOver.value = cfg.r1WeeklyOver ?? SCORE_DEFAULTS.r1WeeklyOver;
     if (scoreR3WeeklyOver) scoreR3WeeklyOver.value = cfg.r3WeeklyOver ?? SCORE_DEFAULTS.r3WeeklyOver;
     if (scoreR2WeeklyUnder) scoreR2WeeklyUnder.value = cfg.r2WeeklyUnder ?? SCORE_DEFAULTS.r2WeeklyUnder;
